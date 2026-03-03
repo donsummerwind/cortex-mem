@@ -31,11 +31,6 @@ impl Dimension {
             "user" => Some(Dimension::User),
             "agent" => Some(Dimension::Agent),
             "session" => Some(Dimension::Session),
-            // Legacy support
-            "agents" => Some(Dimension::Agent),
-            "users" => Some(Dimension::User),
-            "threads" => Some(Dimension::Session),
-            "global" => Some(Dimension::Resources),
             _ => None,
         }
     }
@@ -89,16 +84,17 @@ pub struct FileMetadata {
     pub is_directory: bool,
 }
 
-/// Memory metadata (for V1 compatibility)
+/// Memory metadata for vector store
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryMetadata {
-    pub uri: Option<String>,  // Original URI for reference
+    pub uri: Option<String>,
     pub user_id: Option<String>,
     pub agent_id: Option<String>,
     pub run_id: Option<String>,
     pub actor_id: Option<String>,
     pub role: Option<String>,
-    pub memory_type: V1MemoryType,
+    /// Layer: L0, L1, or L2
+    pub layer: String,
     pub hash: String,
     pub importance_score: f32,
     pub entities: Vec<String>,
@@ -115,7 +111,7 @@ impl Default for MemoryMetadata {
             run_id: None,
             actor_id: None,
             role: None,
-            memory_type: V1MemoryType::default(),
+            layer: "L2".to_string(),
             hash: String::new(),
             importance_score: 0.5,
             entities: Vec::new(),
@@ -124,40 +120,6 @@ impl Default for MemoryMetadata {
         }
     }
 }
-
-/// Memory type for V1 vector store compatibility
-/// 
-/// This is used for backward compatibility with existing vector store data.
-/// For new v2.5 memory indexing, use [`crate::memory_index::MemoryType`] instead.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum V1MemoryType {
-    Conversational,
-    Procedural,
-    Semantic,
-    Episodic,
-}
-
-impl Default for V1MemoryType {
-    fn default() -> Self {
-        V1MemoryType::Conversational
-    }
-}
-
-impl V1MemoryType {
-    pub fn parse(s: &str) -> Self {
-        match s {
-            "Conversational" => V1MemoryType::Conversational,
-            "Procedural" => V1MemoryType::Procedural,
-            "Semantic" => V1MemoryType::Semantic,
-            "Episodic" => V1MemoryType::Episodic,
-            _ => V1MemoryType::Conversational, // Default fallback
-        }
-    }
-}
-
-/// Legacy alias for backward compatibility
-#[deprecated(since = "2.5.0", note = "Use V1MemoryType or memory_index::MemoryType instead")]
-pub type MemoryType = V1MemoryType;
 
 /// User memory category (OpenViking-aligned)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -247,7 +209,8 @@ pub struct Filters {
     pub user_id: Option<String>,
     pub agent_id: Option<String>,
     pub run_id: Option<String>,
-    pub memory_type: Option<V1MemoryType>,
+    /// Layer filter: L0, L1, or L2
+    pub layer: Option<String>,
     pub created_after: Option<DateTime<Utc>>,
     pub created_before: Option<DateTime<Utc>>,
     pub updated_after: Option<DateTime<Utc>>,

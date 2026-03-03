@@ -190,6 +190,52 @@ impl LayerUpdateDebouncer {
         self.pending.read().await.len()
     }
 
+    /// Flush all pending updates immediately (for shutdown)
+    ///
+    /// This method forces execution of ALL pending updates regardless of
+    /// debounce timing. Used during application shutdown to ensure all
+    /// layer updates are processed before exit.
+    ///
+    /// Returns the number of updates executed
+    pub async fn flush_all(&self, updater: &CascadeLayerUpdater) -> usize {
+        // Take all pending updates
+        let all_updates: Vec<PendingUpdate> = {
+            let mut pending = self.pending.write().await;
+            pending.drain().map(|(_, v)| v).collect()
+        };
+
+        let update_count = all_updates.len();
+
+        if update_count > 0 {
+            info!(
+                "🚀 Flushing ALL {} pending updates (shutdown mode)",
+                update_count
+            );
+        }
+
+        // Execute all updates
+        for update in all_updates {
+            info!(
+                "⚙️  Flushing update for {} ({} requests merged)",
+                update.dir_uri, update.request_count
+            );
+
+            if let Err(e) = updater
+                .update_directory_layers(&update.dir_uri, &update.scope, &update.owner_id)
+                .await
+            {
+                tracing::error!("Failed to flush layers for {}: {}", update.dir_uri, e);
+            }
+        }
+
+        update_count
+    }
+
+    /// Check if there are any pending updates
+    pub async fn has_pending(&self) -> bool {
+        !self.pending.read().await.is_empty()
+    }
+
     /// Clear all pending updates (useful for tests)
     #[cfg(test)]
     pub async fn clear(&self) {

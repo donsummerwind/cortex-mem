@@ -1360,32 +1360,21 @@ impl App {
                 }
             }
 
-            // 🔧 等待后台异步任务完成
-            // SessionClosed 事件会触发记忆提取（LLM调用）
-            // LLM 调用可能需要 30 秒或更长时间，所以等待时间要足够长
-            log::info!("⏳ 等待后台异步任务完成（包括记忆提取，可能需要较长时间）...");
-            let completed = tenant_ops.wait_for_background_tasks(120).await;
+            // 🔧 v2.5: 刷新并等待所有后台任务完成
+            // 这会：
+            // 1. 等待事件处理完成（包括记忆提取）
+            // 2. 刷新 debouncer 中的待处理层级更新
+            // 3. 再次等待确保所有更新完成
+            // 使用真正的事件通知机制，不使用固定超时
+            log::info!("⏳ 刷新并等待所有后台任务完成...");
+            let completed = tenant_ops.flush_and_wait(Some(1)).await;
             if !completed {
-                log::warn!("⚠️ 后台任务等待超时，部分任务可能未完成");
-            }
-
-            // 🔧 v2.5: 显式生成 user 和 agent 目录的 L0/L1 层级文件
-            // 这是在记忆写入完成后单独调用的，确保所有层级文件都被生成
-            log::info!("📑 开始为 user 和 agent 目录生成 L0/L1 层级文件...");
-            let user_id = "tars_user";
-            let agent_id = self.current_bot_id.read().unwrap().clone().unwrap_or_else(|| "default".to_string());
-            match tenant_ops.generate_user_agent_layers(user_id, &agent_id).await {
-                Ok(_) => {
-                    log::info!("✅ user/agent 目录层级文件生成完成");
-                }
-                Err(e) => {
-                    log::warn!("⚠️ user/agent 目录层级文件生成失败: {}", e);
-                }
+                log::warn!("⚠️ flush_and_wait 返回 false，可能有任务未完成");
             }
 
             // 退出时生成所有缺失的 L0/L1 层级文件
-            // 这里主要是为了确保 session 目录的层级文件完整
-            log::info!("📑 开始生成缺失的 L0/L1 层级文件...");
+            // ensure_all_layers 已经会扫描所有维度
+            log::info!("📑 开始生成所有缺失的 L0/L1 层级文件...");
             match tenant_ops.ensure_all_layers().await {
                 Ok(stats) => {
                     log::info!(

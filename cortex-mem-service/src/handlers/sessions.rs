@@ -24,9 +24,17 @@ pub async fn create_session(
     let title = payload.get("title")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    
+    let user_id = payload.get("user_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    
+    let agent_id = payload.get("agent_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
     let session_mgr = state.session_manager.write().await;
-    let mut metadata = session_mgr.create_session(&thread_id).await?;
+    let mut metadata = session_mgr.create_session_with_ids(&thread_id, user_id, agent_id).await?;
     
     // Set title if provided
     if let Some(t) = title {

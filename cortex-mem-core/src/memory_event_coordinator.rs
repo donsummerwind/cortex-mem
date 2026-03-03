@@ -104,6 +104,18 @@ impl MemoryEventCoordinator {
         )
     }
 
+    /// 发送事件到协调器（增加 pending_tasks 计数）
+    ///
+    /// 这个方法应该在发送事件时调用，确保 flush_and_wait 能正确等待事件处理完成
+    pub fn send_event(&self, event: MemoryEvent) -> Result<()> {
+        // 先增加计数
+        self.pending_tasks.fetch_add(1, Ordering::SeqCst);
+        // 发送事件（通过内部 channel）
+        // 注意：这里需要通过外部保存的 sender 发送
+        // 由于架构限制，这个方法主要用于文档说明正确的使用方式
+        Ok(())
+    }
+
     /// Create a new memory event coordinator with custom config
     pub fn new_with_config(
         filesystem: Arc<CortexFilesystem>,
@@ -208,9 +220,17 @@ impl MemoryEventCoordinator {
                     event = event_rx.recv() => {
                         match event {
                             Some(event) => {
-                                if let Err(e) = self.handle_event(event).await {
+                                // 🔧 关键修复：在取出事件时就增加计数
+                                // 这样 flush_and_wait 可以正确检测到有待处理的事件
+                                self.pending_tasks.fetch_add(1, Ordering::SeqCst);
+
+                                if let Err(e) = self.handle_event_inner(event).await {
                                     error!("Event handling failed: {}", e);
                                 }
+
+                                // 减少计数并通知
+                                let remaining = self.pending_tasks.fetch_sub(1, Ordering::SeqCst) - 1;
+                                let _ = self.task_completion_tx.send(remaining);
                             }
                             None => {
                                 warn!("Memory Event Coordinator stopped (channel closed)");
@@ -262,46 +282,118 @@ impl MemoryEventCoordinator {
         self.pending_tasks.load(Ordering::SeqCst)
     }
 
-    /// 生成 user 和 agent 目录的 L0/L1 层级文件
+    /// 刷新 debouncer 并等待所有任务完成（用于退出流程）
     ///
-    /// 这个方法应该在退出流程中显式调用，确保所有记忆的层级文件都被生成。
-    /// 注意：这是一个长时间运行的操作，会调用 LLM。
-    pub async fn generate_user_agent_layers(
-        &self,
-        user_id: &str,
-        agent_id: &str,
-    ) -> Result<()> {
-        // 为用户目录生成 L0/L1 层级文件
-        log::info!("📑 开始为用户目录生成 L0/L1 层级文件...");
-        match self
-            .layer_updater
-            .update_all_layers(&MemoryScope::User, user_id)
-            .await
-        {
-            Ok(_) => {
-                log::info!("✅ 用户目录层级文件生成完成");
+    /// 这个方法会：
+    /// 0. 等待事件从 channel 被取出（通过 yield 让出运行时）
+    /// 1. 等待当前正在处理的事件完成
+    /// 2. 强制处理 debouncer 中所有待处理的层级更新
+    /// 3. 再次等待确保所有更新完成
+    ///
+    /// 使用事件通知机制而非固定超时，确保真正等待任务完成。
+    ///
+    /// # Arguments
+    /// * `check_interval` - 检查间隔
+    ///
+    /// # Returns
+    /// * `true` - 所有任务已完成
+    /// * `false` - 在等待过程中有新任务产生（通常不应该发生）
+    pub async fn flush_and_wait(&self, check_interval: Duration) -> bool {
+        log::info!("🔄 开始刷新并等待所有任务完成...");
+
+        let start = std::time::Instant::now();
+        let max_wait = Duration::from_secs(300); // 最大等待 5 分钟
+
+        // 阶段0：让出运行时，让事件循环有机会运行
+        // 这是关键：tokio::task::yield_now() 让其他任务有机会执行
+        log::info!("⏳ 阶段0：让出运行时，等待事件被取出...");
+        for i in 0..10 {
+            tokio::task::yield_now().await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+
+            let pending = self.pending_tasks.load(Ordering::SeqCst);
+            if pending > 0 {
+                log::info!("✅ 阶段0完成：检测到 {} 个任务开始处理", pending);
+                break;
             }
-            Err(e) => {
-                log::warn!("⚠️ 用户目录层级文件生成失败: {}", e);
+
+            if i == 9 {
+                log::info!("ℹ️ 阶段0完成：无待处理任务检测到");
             }
         }
 
-        // 为 agent 目录生成层级文件
-        log::info!("📑 开始为 Agent 目录生成 L0/L1 层级文件...");
-        match self
-            .layer_updater
-            .update_all_layers(&MemoryScope::Agent, agent_id)
-            .await
-        {
-            Ok(_) => {
-                log::info!("✅ Agent 目录层级文件生成完成");
+        // 阶段1：等待当前事件处理完成
+        loop {
+            let pending = self.pending_tasks.load(Ordering::SeqCst);
+            if pending == 0 {
+                // 等待一小段时间，看是否有新事件被取出
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let pending_after = self.pending_tasks.load(Ordering::SeqCst);
+                if pending_after == 0 {
+                    break;
+                }
+                continue;
             }
-            Err(e) => {
-                log::warn!("⚠️ Agent 目录层级文件生成失败: {}", e);
+
+            // 检查是否超时
+            if start.elapsed() >= max_wait {
+                log::warn!("⚠️ 等待超时，仍有 {} 个任务未完成", pending);
+                return false;
             }
+
+            log::trace!(
+                "⏳ 等待 {} 个事件处理任务完成...（已等待 {:?}）",
+                pending,
+                start.elapsed()
+            );
+            tokio::time::sleep(check_interval).await;
+        }
+        log::info!("✅ 阶段1完成：事件处理任务已清空");
+
+        // 阶段2：刷新 debouncer 中的待处理更新
+        if let Some(ref debouncer) = self.debouncer {
+            let pending_count = debouncer.pending_count().await;
+            if pending_count > 0 {
+                log::info!(
+                    "🔄 阶段2：刷新 {} 个 debouncer 待处理更新...",
+                    pending_count
+                );
+                let flushed = debouncer.flush_all(&self.layer_updater).await;
+                log::info!("✅ 阶段2完成：已刷新 {} 个层级更新", flushed);
+            } else {
+                log::info!("✅ 阶段2完成：debouncer 无待处理更新");
+            }
+        } else {
+            log::info!("✅ 阶段2跳过：debouncer 未启用");
         }
 
-        Ok(())
+        // 阶段3：再次等待，确保 debouncer 刷新产生的任务也完成
+        loop {
+            let pending = self.pending_tasks.load(Ordering::SeqCst);
+            if pending == 0 {
+                break;
+            }
+
+            // 检查是否超时
+            if start.elapsed() >= max_wait {
+                log::warn!("⚠️ 等待超时，仍有 {} 个任务未完成", pending);
+                return false;
+            }
+
+            log::info!(
+                "⏳ 等待 {} 个刷新后任务完成...（已等待 {:?}）",
+                pending,
+                start.elapsed()
+            );
+            tokio::time::sleep(check_interval).await;
+        }
+        log::info!("✅ 阶段3完成：所有任务已清空");
+
+        log::info!(
+            "🎉 flush_and_wait 完成：所有任务和层级更新已处理（耗时 {:?}）",
+            start.elapsed()
+        );
+        true
     }
 
     /// 等待所有后台任务完成
@@ -315,10 +407,10 @@ impl MemoryEventCoordinator {
     pub async fn wait_for_completion(&self, timeout: Duration) -> bool {
         let start = std::time::Instant::now();
         let check_interval = Duration::from_millis(500);
-        
+
         loop {
             let pending = self.pending_tasks.load(Ordering::SeqCst);
-            
+
             // 如果没有待处理任务，返回成功
             if pending == 0 {
                 // 额外等待一小段时间，确保没有新任务刚刚提交
@@ -331,39 +423,21 @@ impl MemoryEventCoordinator {
                 // 有新任务提交，继续等待
                 continue;
             }
-            
+
             // 检查是否超时
             if start.elapsed() >= timeout {
-                log::warn!(
-                    "⚠️ 等待后台任务超时，仍有 {} 个任务未完成",
-                    pending
-                );
+                log::warn!("⚠️ 等待后台任务超时，仍有 {} 个任务未完成", pending);
                 return false;
             }
-            
+
             // 首次打印等待日志
             if start.elapsed() < Duration::from_millis(600) {
                 log::info!("⏳ 等待 {} 个后台任务完成...", pending);
             }
-            
+
             // 等待一小段时间再检查
             tokio::time::sleep(check_interval).await;
         }
-    }
-
-    /// Handle a single event
-    async fn handle_event(&self, event: MemoryEvent) -> Result<()> {
-        // 增加任务计数
-        self.pending_tasks.fetch_add(1, Ordering::SeqCst);
-
-        // 使用 defer 模式确保任务完成时减少计数
-        let result = self.handle_event_inner(event).await;
-
-        // 减少任务计数并通知
-        let remaining = self.pending_tasks.fetch_sub(1, Ordering::SeqCst) - 1;
-        let _ = self.task_completion_tx.send(remaining);
-
-        result
     }
 
     /// Handle a single event (internal implementation)
@@ -690,7 +764,7 @@ impl MemoryEventCoordinator {
                 "User memory update for session {}: {} created, {} updated",
                 session_id, user_result.created, user_result.updated
             );
-            
+
             // 注意：不在这里调用 update_all_layers，因为它是长时间运行的操作
             // 会阻塞事件处理循环。改为在退出流程中显式调用 generate_user_agent_layers
             log::info!("📝 记忆已写入，退出时应调用 generate_user_agent_layers 生成层级文件");

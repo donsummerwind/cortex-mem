@@ -158,7 +158,7 @@ mod test_utils {
                 } else {
                     drop(sm);
                     let sm = self.session_manager.write().await;
-                    sm.create_session(thread_id).await.unwrap();
+                    sm.create_session_with_ids(thread_id, None, None).await.unwrap();
                 }
             }
 

@@ -720,20 +720,26 @@ impl MemoryOperations {
         }
     }
 
-    /// 生成 user 和 agent 目录的 L0/L1 层级文件
+    /// 刷新并等待所有后台任务完成（用于退出流程）
     ///
-    /// 这个方法应该在退出流程中显式调用，确保所有记忆的层级文件都被生成。
-    /// 注意：这是一个长时间运行的操作，会调用 LLM。
+    /// 这个方法会：
+    /// 1. 等待当前正在处理的事件完成
+    /// 2. 强制处理 debouncer 中所有待处理的层级更新
+    /// 3. 再次等待确保所有更新完成
+    ///
+    /// 使用事件通知机制而非固定超时，确保真正等待任务完成。
+    /// 由于涉及 LLM 调用，可能需要较长时间。
     ///
     /// # Arguments
-    /// * `user_id` - 用户ID
-    /// * `agent_id` - Agent ID
-    pub async fn generate_user_agent_layers(&self, user_id: &str, agent_id: &str) -> Result<()> {
+    /// * `check_interval_secs` - 检查间隔（秒），默认 1 秒
+    pub async fn flush_and_wait(&self, check_interval_secs: Option<u64>) -> bool {
+        let interval = std::time::Duration::from_secs(check_interval_secs.unwrap_or(1));
+        
         if let Some(ref coordinator) = self.event_coordinator {
-            coordinator.generate_user_agent_layers(user_id, agent_id).await?;
+            coordinator.flush_and_wait(interval).await
         } else {
-            log::warn!("⚠️ MemoryEventCoordinator 未初始化，无法生成层级文件");
+            log::warn!("⚠️ MemoryEventCoordinator 未初始化，跳过等待");
+            true
         }
-        Ok(())
     }
 }

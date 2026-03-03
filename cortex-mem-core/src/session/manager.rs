@@ -309,11 +309,6 @@ impl SessionManager {
         Ok(metadata)
     }
 
-    /// Create a new session (deprecated - use create_session_with_ids)
-    pub async fn create_session(&self, thread_id: &str) -> Result<SessionMetadata> {
-        self.create_session_with_ids(thread_id, None, None).await
-    }
-
     /// Load session metadata
     pub async fn load_session(&self, thread_id: &str) -> Result<SessionMetadata> {
         let metadata_uri = format!("cortex://session/{}/.session.json", thread_id);

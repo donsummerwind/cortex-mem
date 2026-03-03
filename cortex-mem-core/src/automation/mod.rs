@@ -9,7 +9,7 @@ mod watcher;
 #[path = "layer_generator_tests.rs"]
 mod layer_generator_tests;
 
-pub use auto_extract::{AutoExtractConfig, AutoExtractStats, AutoExtractor, AutoSessionManager};
+pub use auto_extract::{AutoExtractConfig, AutoExtractStats, AutoExtractor};
 pub use indexer::{AutoIndexer, IndexStats, IndexerConfig};
 pub use layer_generator::{
     AbstractConfig, GenerationStats, LayerGenerationConfig, LayerGenerator, OverviewConfig,
