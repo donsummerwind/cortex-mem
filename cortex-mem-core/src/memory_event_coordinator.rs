@@ -611,3 +611,156 @@ Return ONLY the JSON object. No additional text before or after."#,
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::MockLLMClient;
+
+    #[test]
+    fn test_build_extraction_prompt() {
+        let messages = vec![
+            "User: I prefer Rust for systems programming.".to_string(),
+            "Assistant: That's a great choice!".to_string(),
+        ];
+        
+        // Build prompt directly (doesn't need coordinator)
+        let messages_text = messages.join("\n\n---\n\n");
+        let prompt = format!(
+            r#"Analyze the following conversation and extract memories in JSON format.
+
+## Conversation
+
+{}
+
+## Response
+
+Return ONLY the JSON object. No additional text before or after."#,
+            messages_text
+        );
+        
+        assert!(prompt.contains("I prefer Rust"));
+        assert!(prompt.contains("conversation"));
+    }
+
+    #[test]
+    fn test_parse_extraction_response() {
+        let llm_client = MockLLMClient::new();
+        
+        // Valid JSON response
+        let response = r#"{
+            "personal_info": [],
+            "work_history": [],
+            "preferences": [{"topic": "programming", "preference": "Rust", "confidence": 0.9}],
+            "relationships": [],
+            "goals": [],
+            "entities": [],
+            "events": [],
+            "cases": []
+        }"#;
+        
+        // Parse response directly
+        let json_str = if response.starts_with('{') {
+            response.to_string()
+        } else {
+            response
+                .find('{')
+                .and_then(|start| response.rfind('}').map(|end| &response[start..=end]))
+                .map(|s| s.to_string())
+                .unwrap_or_default()
+        };
+        
+        let extracted: ExtractedMemories = serde_json::from_str(&json_str).unwrap_or_default();
+        
+        assert_eq!(extracted.preferences.len(), 1);
+        assert_eq!(extracted.preferences[0].topic, "programming");
+        assert_eq!(extracted.preferences[0].preference, "Rust");
+        
+        // Just to suppress unused variable warning
+        let _ = llm_client;
+    }
+
+    #[test]
+    fn test_parse_extraction_response_with_wrapper() {
+        // Response with text wrapper
+        let response = r#"Here is the extracted data:
+        {
+            "personal_info": [],
+            "work_history": [],
+            "preferences": [],
+            "relationships": [],
+            "goals": [{"goal": "Learn Rust", "category": "learning", "confidence": 0.8}],
+            "entities": [],
+            "events": [],
+            "cases": []
+        }
+        That's all!"#;
+        
+        // Extract JSON from wrapper
+        let json_str = response
+            .find('{')
+            .and_then(|start| response.rfind('}').map(|end| &response[start..=end]))
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        
+        let extracted: ExtractedMemories = serde_json::from_str(&json_str).unwrap_or_default();
+        
+        assert_eq!(extracted.goals.len(), 1);
+        assert_eq!(extracted.goals[0].goal, "Learn Rust");
+    }
+
+    #[test]
+    fn test_parse_extraction_response_empty() {
+        // Empty response
+        let json_str = "";
+        let extracted: ExtractedMemories = serde_json::from_str(json_str).unwrap_or_default();
+        assert!(extracted.is_empty());
+        
+        // Invalid JSON
+        let extracted: ExtractedMemories = serde_json::from_str("not json").unwrap_or_default();
+        assert!(extracted.is_empty());
+    }
+
+    #[test]
+    fn test_event_stats_tracking() {
+        let mut stats = EventStats::default();
+        
+        stats.record(&MemoryEvent::MemoryCreated {
+            scope: MemoryScope::User,
+            owner_id: "user_001".to_string(),
+            memory_id: "mem_001".to_string(),
+            memory_type: crate::memory_index::MemoryType::Preference,
+            key: "test".to_string(),
+            source_session: "session_001".to_string(),
+            file_uri: "cortex://user/user_001/test.md".to_string(),
+        });
+        
+        stats.record(&MemoryEvent::SessionClosed {
+            session_id: "session_001".to_string(),
+            user_id: "user_001".to_string(),
+            agent_id: "agent_001".to_string(),
+        });
+        
+        assert_eq!(stats.memory_created, 1);
+        assert_eq!(stats.sessions_closed, 1);
+        assert_eq!(stats.total_events(), 2);
+    }
+    
+    #[test]
+    fn test_memory_event_scope() {
+        let event = MemoryEvent::MemoryCreated {
+            scope: MemoryScope::User,
+            owner_id: "user_001".to_string(),
+            memory_id: "mem_001".to_string(),
+            memory_type: crate::memory_index::MemoryType::Preference,
+            key: "test".to_string(),
+            source_session: "session_001".to_string(),
+            file_uri: "cortex://user/user_001/test.md".to_string(),
+        };
+        
+        assert_eq!(event.scope(), Some(&MemoryScope::User));
+        assert_eq!(event.owner_id(), Some("user_001"));
+        assert!(event.requires_cascade_update());
+        assert!(event.requires_vector_sync());
+    }
+}

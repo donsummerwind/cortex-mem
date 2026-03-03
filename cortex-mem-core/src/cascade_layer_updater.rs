@@ -571,3 +571,53 @@ impl CascadeLayerUpdater {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::filesystem::CortexFilesystem;
+    use crate::llm::MockLLMClient;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    #[test]
+    fn test_get_parent_directory() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let filesystem = Arc::new(CortexFilesystem::new("/tmp/test"));
+        let llm_client = Arc::new(MockLLMClient::new());
+        
+        let updater = CascadeLayerUpdater::new(filesystem, llm_client, tx);
+        
+        assert_eq!(updater.get_parent_directory("cortex://user/test/path/file.md"), "cortex://user/test/path");
+        assert_eq!(updater.get_parent_directory("cortex://user/test/file.md"), "cortex://user/test");
+        assert_eq!(updater.get_parent_directory("cortex://user/file.md"), "cortex://user");
+    }
+
+    #[test]
+    fn test_get_scope_root() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let filesystem = Arc::new(CortexFilesystem::new("/tmp/test"));
+        let llm_client = Arc::new(MockLLMClient::new());
+        
+        let updater = CascadeLayerUpdater::new(filesystem, llm_client, tx);
+        
+        assert_eq!(updater.get_scope_root(&MemoryScope::User, "user_001"), "cortex://user/user_001");
+        assert_eq!(updater.get_scope_root(&MemoryScope::Agent, "agent_001"), "cortex://agent/agent_001");
+        assert_eq!(updater.get_scope_root(&MemoryScope::Session, "session_001"), "cortex://session/session_001");
+        assert_eq!(updater.get_scope_root(&MemoryScope::Resources, ""), "cortex://resources");
+    }
+
+    #[test]
+    fn test_get_parent_directory_opt() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let filesystem = Arc::new(CortexFilesystem::new("/tmp/test"));
+        let llm_client = Arc::new(MockLLMClient::new());
+        
+        let updater = CascadeLayerUpdater::new(filesystem, llm_client, tx);
+        
+        assert_eq!(updater.get_parent_directory_opt("cortex://user/test/file.md"), Some("cortex://user/test".to_string()));
+        assert_eq!(updater.get_parent_directory_opt("cortex://user/file.md"), Some("cortex://user".to_string()));
+        // cortex://file.md -> "cortex:/" (after rsplit_once('/') on "cortex://file.md")
+        assert_eq!(updater.get_parent_directory_opt("cortex://file.md"), Some("cortex:/".to_string()));
+    }
+}
