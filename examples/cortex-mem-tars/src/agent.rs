@@ -574,8 +574,16 @@ impl AgentChatHandler {
         let ops_clone = self.operations.clone();
         let session_id_clone = self.session_id.clone();
 
+        // 记录开始处理
+        tracing::info!("🚀 开始处理用户消息 (历史消息: {} 条)", self.history.len());
+
         tokio::spawn(async move {
             let mut full_response = String::new();
+            let start_time = std::time::Instant::now();
+            let mut tool_call_count = 0;
+            let mut chunk_count = 0;
+
+            tracing::info!("🔄 Agent 多轮对话开始...");
 
             let mut stream = agent
                 .stream_chat(prompt_message, chat_history)
@@ -591,18 +599,39 @@ impl AgentChatHandler {
                                 StreamedAssistantContent::Text(text_content) => {
                                     let text = &text_content.text;
                                     full_response.push_str(text);
+                                    chunk_count += 1;
+                                    // 每 20 个 chunk 记录一次进度
+                                    if chunk_count % 20 == 0 {
+                                        tracing::debug!("📝 流式输出进度: {} chunks, {} 字符", chunk_count, full_response.len());
+                                    }
                                     if tx.send(text.clone()).await.is_err() {
                                         break;
                                     }
                                 }
-                                StreamedAssistantContent::ToolCall { .. } => {
-                                    log::debug!("调用工具中...");
+                                StreamedAssistantContent::ToolCall { tool_call, .. } => {
+                                    tool_call_count += 1;
+                                    let args_str = tool_call.function.arguments.to_string();
+                                    let args_summary = if args_str.len() > 100 {
+                                        format!("{}...", &args_str[..100])
+                                    } else {
+                                        args_str
+                                    };
+                                    tracing::info!("🔧 工具调用 #{}: {} ({})", tool_call_count, tool_call.function.name, args_summary);
+                                }
+                                StreamedAssistantContent::ToolCallDelta { id, content, .. } => {
+                                    tracing::debug!("🔧 工具调用增量 [{}]: {:?}", id, content);
                                 }
                                 _ => {}
                             }
                         }
+                        MultiTurnStreamItem::StreamUserItem(_user_content) => {
+                            tracing::debug!("📥 收到用户内容 (工具结果)");
+                        }
                         MultiTurnStreamItem::FinalResponse(final_resp) => {
                             full_response = final_resp.response().to_string();
+                            let elapsed = start_time.elapsed();
+                            tracing::info!("✅ 对话完成 [耗时: {:.2}s, 工具调用: {} 次, 响应: {} 字符]", 
+                                elapsed.as_secs_f64(), tool_call_count, full_response.len());
                             let _ = tx.send(full_response.clone()).await;
                             break;
                         }
@@ -611,7 +640,7 @@ impl AgentChatHandler {
                         }
                     },
                     Err(e) => {
-                        log::error!("流式处理错误: {:?}", e);
+                        tracing::error!("❌ 流式处理错误: {:?}", e);
                         let error_msg = format!("[错误: {}]", e);
                         let _ = tx.send(error_msg).await;
                         break;
@@ -621,6 +650,8 @@ impl AgentChatHandler {
 
             // 对话结束后自动保存到 session
             if let Some(ops) = ops_clone {
+                tracing::info!("💾 保存对话到 session: {}", session_id_clone);
+                
                 if !user_input_clone.is_empty() {
                     let user_store = cortex_mem_tools::StoreArgs {
                         content: user_input_clone.clone(),

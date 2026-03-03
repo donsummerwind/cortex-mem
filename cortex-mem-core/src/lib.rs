@@ -75,6 +75,8 @@ pub mod memory_events;
 pub mod memory_index_manager;
 pub mod incremental_memory_updater;
 pub mod cascade_layer_updater;
+pub mod cascade_layer_debouncer;  // Phase 2 optimization
+pub mod llm_result_cache;          // Phase 3 optimization (LLM cache only)
 pub mod vector_sync_manager;
 pub mod memory_event_coordinator;
 
@@ -113,9 +115,11 @@ pub use memory_events::{
 };
 pub use memory_index_manager::MemoryIndexManager;
 pub use incremental_memory_updater::IncrementalMemoryUpdater;
-pub use cascade_layer_updater::CascadeLayerUpdater;
+pub use cascade_layer_updater::{CascadeLayerUpdater, UpdateStats};
+pub use cascade_layer_debouncer::{LayerUpdateDebouncer, DebouncerConfig};  // Phase 2
+pub use llm_result_cache::{LlmResultCache, CacheConfig, CacheStats};      // Phase 3
 pub use vector_sync_manager::{VectorSyncManager, VectorSyncStats};
-pub use memory_event_coordinator::MemoryEventCoordinator;
+pub use memory_event_coordinator::{MemoryEventCoordinator, CoordinatorConfig};  // Phase 2
 
 // Session-related re-exports
 pub use session::message::MessageStorage;

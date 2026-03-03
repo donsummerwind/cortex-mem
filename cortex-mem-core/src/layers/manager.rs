@@ -37,6 +37,12 @@ impl LayerManager {
     }
     
     /// Load L0 abstract layer
+    ///
+    /// IMPORTANT: This method does NOT generate layers on-demand to avoid
+    /// blocking the agent's response. Layer generation should be done
+    /// asynchronously via MemoryEventCoordinator.
+    ///
+    /// If the abstract doesn't exist, returns an error instead of generating.
     async fn load_abstract(&self, uri: &str) -> Result<String> {
         let abstract_uri = Self::get_layer_uri(uri, ContextLayer::L0Abstract);
         
@@ -50,23 +56,30 @@ impl LayerManager {
         
         if is_directory {
             // For directories, abstract should be pre-generated via layers ensure-all
+            // or asynchronously via MemoryEventCoordinator
             return Err(crate::Error::Other(format!(
-                "Abstract not found for directory '{}'. Run 'cortex-mem layers ensure-all' to generate it.",
+                "Abstract not found for directory '{}'. Layer generation is asynchronous. \
+                 The abstract will be generated in the background and available shortly.",
                 uri
             )));
         }
         
-        // For files, generate abstract from L2 using LLM
-        let detail = self.load_detail(uri).await?;
-        let abstract_text = self.abstract_gen.generate_with_llm(&detail, &self.llm_client).await?;
-        
-        // Save for future use
-        self.filesystem.write(&abstract_uri, &abstract_text).await?;
-        
-        Ok(abstract_text)
+        // For files, also don't generate on-demand to avoid blocking
+        // Return error indicating the layer is being generated asynchronously
+        return Err(crate::Error::Other(format!(
+            "Abstract not found for '{}'. Layer generation is asynchronous. \
+             Try again later or use 'read' tool for full content.",
+            uri
+        )));
     }
     
     /// Load L1 overview layer
+    ///
+    /// IMPORTANT: This method does NOT generate layers on-demand to avoid
+    /// blocking the agent's response. Layer generation should be done
+    /// asynchronously via MemoryEventCoordinator.
+    ///
+    /// If the overview doesn't exist, returns an error instead of generating.
     async fn load_overview(&self, uri: &str) -> Result<String> {
         let overview_uri = Self::get_layer_uri(uri, ContextLayer::L1Overview);
         
@@ -74,12 +87,12 @@ impl LayerManager {
             return self.filesystem.read(&overview_uri).await;
         }
         
-        let detail = self.load_detail(uri).await?;
-        let overview = self.overview_gen.generate_with_llm(&detail, &self.llm_client).await?;
-        
-        self.filesystem.write(&overview_uri, &overview).await?;
-        
-        Ok(overview)
+        // Don't generate on-demand to avoid blocking the agent
+        return Err(crate::Error::Other(format!(
+            "Overview not found for '{}'. Layer generation is asynchronous. \
+             Try again later or use 'read' tool for full content.",
+            uri
+        )));
     }
     
     /// Load L2 detail layer (original content)

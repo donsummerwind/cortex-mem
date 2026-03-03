@@ -41,6 +41,12 @@ pub struct MemoryOperations {
 
     pub(crate) default_user_id: String,
     pub(crate) default_agent_id: String,
+    
+    /// v2.5: 事件发送器，用于异步触发层级生成
+    pub(crate) memory_event_tx: Option<tokio::sync::mpsc::UnboundedSender<cortex_mem_core::memory_events::MemoryEvent>>,
+    
+    /// v2.5: 事件协调器引用，用于等待后台任务完成
+    pub(crate) event_coordinator: Option<Arc<cortex_mem_core::MemoryEventCoordinator>>,
 }
 
 impl MemoryOperations {
@@ -137,6 +143,9 @@ impl MemoryOperations {
             embedding_client.clone(),
             vector_store.clone(),
         );
+        
+        // 保存 coordinator 克隆用于后台任务等待
+        let coordinator_clone = coordinator.clone();
         
         // Start the coordinator event loop in background
         tokio::spawn(coordinator.start(event_rx));
@@ -336,6 +345,12 @@ impl MemoryOperations {
 
             default_user_id: actual_user_id,
             default_agent_id: tenant_id.clone(),
+            
+            // v2.5: 保存事件发送器
+            memory_event_tx: Some(memory_event_tx),
+            
+            // v2.5: 保存事件协调器引用，用于等待后台任务完成
+            event_coordinator: Some(coordinator_clone),
         })
     }
 
@@ -674,5 +689,51 @@ impl MemoryOperations {
                 Err(e.into())
             }
         }
+    }
+
+    /// 等待所有后台异步任务完成
+    ///
+    /// 这个方法会等待 MemoryEventCoordinator 处理完所有待处理的事件。
+    /// 由于 SessionClosed 事件会触发 LLM 调用（记忆提取 + 层级生成），
+    /// 这个方法会等待足够长的时间让这些操作完成。
+    ///
+    /// # Arguments
+    /// * `max_wait_secs` - 最大等待时间（秒）
+    ///
+    /// # Returns
+    /// 返回是否成功完成（true = 完成，false = 超时）
+    ///
+    /// # Note
+    /// v2.5 改进：使用真正的事件通知机制等待后台任务完成
+    /// 而不是基于时间的启发式等待
+    pub async fn wait_for_background_tasks(&self, max_wait_secs: u64) -> bool {
+        use std::time::Duration;
+        
+        if let Some(ref coordinator) = self.event_coordinator {
+            // 使用真正的事件通知机制
+            coordinator.wait_for_completion(Duration::from_secs(max_wait_secs)).await
+        } else {
+            // 降级：如果没有 coordinator，使用简单的等待
+            log::warn!("⚠️ MemoryEventCoordinator 未初始化，使用简单等待");
+            tokio::time::sleep(Duration::from_secs(max_wait_secs.min(5))).await;
+            true
+        }
+    }
+
+    /// 生成 user 和 agent 目录的 L0/L1 层级文件
+    ///
+    /// 这个方法应该在退出流程中显式调用，确保所有记忆的层级文件都被生成。
+    /// 注意：这是一个长时间运行的操作，会调用 LLM。
+    ///
+    /// # Arguments
+    /// * `user_id` - 用户ID
+    /// * `agent_id` - Agent ID
+    pub async fn generate_user_agent_layers(&self, user_id: &str, agent_id: &str) -> Result<()> {
+        if let Some(ref coordinator) = self.event_coordinator {
+            coordinator.generate_user_agent_layers(user_id, agent_id).await?;
+        } else {
+            log::warn!("⚠️ MemoryEventCoordinator 未初始化，无法生成层级文件");
+        }
+        Ok(())
     }
 }

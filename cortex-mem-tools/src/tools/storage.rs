@@ -3,10 +3,16 @@
 use crate::{MemoryOperations, Result, types::*};
 use chrono::Utc;
 use cortex_mem_core::{FilesystemOperations, MessageRole};
+use cortex_mem_core::memory_events::{MemoryEvent, ChangeType};
+use cortex_mem_core::memory_index::MemoryScope;
 use std::collections::HashMap;
 
 impl MemoryOperations {
     /// Store content with automatic L0/L1 layer generation
+    ///
+    /// IMPORTANT: Layer generation is now fully asynchronous to avoid blocking
+    /// the agent's response. For session scope, we send LayerUpdateNeeded events
+    /// which are processed by MemoryEventCoordinator in the background.
     pub async fn store(&self, args: StoreArgs) -> Result<StoreResponse> {
         // Determine storage scope: user, session, or agent
         let scope = match args.scope.as_str() {
@@ -147,18 +153,90 @@ impl MemoryOperations {
             self.filesystem.write(&uri, &args.content).await?;
         }
 
-        // 🔧 Auto-generate layers if requested (ONLY for user and agent scope)
-        // Session scope: skip per-message layer generation to avoid overwriting
-        // Session-level layers will be generated when the session closes
+        // 🔧 Layer generation is now FULLY ASYNCHRONOUS
+        // We send events to MemoryEventCoordinator which processes them in background
+        // This prevents blocking the agent's response
+        
         let layers_generated = HashMap::new();
-        if args.auto_generate_layers.unwrap_or(true) && scope != "session" {
-            // Use layer_manager to generate all layers
-            if let Err(e) = self
-                .layer_manager
-                .generate_all_layers(&uri, &args.content)
-                .await
-            {
-                tracing::warn!("Failed to generate layers for {}: {}", uri, e);
+        
+        if args.auto_generate_layers.unwrap_or(true) {
+            match scope {
+                "user" => {
+                    // Send LayerUpdateNeeded event for user scope
+                    if let Some(ref tx) = self.memory_event_tx {
+                        let user_id = args.user_id.clone().unwrap_or_else(|| self.default_user_id.clone());
+                        let parent_dir = uri.rsplit_once('/')
+                            .map(|(dir, _)| dir.to_string())
+                            .unwrap_or_else(|| uri.clone());
+                        
+                        let _ = tx.send(MemoryEvent::LayerUpdateNeeded {
+                            scope: MemoryScope::User,
+                            owner_id: user_id,
+                            directory_uri: parent_dir,
+                            change_type: ChangeType::Add,
+                            changed_file: uri.clone(),
+                        });
+                        tracing::debug!("📤 Sent LayerUpdateNeeded event for user scope");
+                    } else {
+                        // Fallback: synchronous generation (should not happen in production)
+                        tracing::warn!("⚠️ memory_event_tx not available, falling back to sync generation");
+                        if let Err(e) = self.layer_manager.generate_all_layers(&uri, &args.content).await {
+                            tracing::warn!("Failed to generate layers for {}: {}", uri, e);
+                        }
+                    }
+                }
+                "agent" => {
+                    // Send LayerUpdateNeeded event for agent scope
+                    if let Some(ref tx) = self.memory_event_tx {
+                        let agent_id = args.agent_id.clone()
+                            .or_else(|| Some(args.thread_id.clone()))
+                            .unwrap_or_else(|| self.default_agent_id.clone());
+                        let parent_dir = uri.rsplit_once('/')
+                            .map(|(dir, _)| dir.to_string())
+                            .unwrap_or_else(|| uri.clone());
+                        
+                        let _ = tx.send(MemoryEvent::LayerUpdateNeeded {
+                            scope: MemoryScope::Agent,
+                            owner_id: agent_id,
+                            directory_uri: parent_dir,
+                            change_type: ChangeType::Add,
+                            changed_file: uri.clone(),
+                        });
+                        tracing::debug!("📤 Sent LayerUpdateNeeded event for agent scope");
+                    } else {
+                        tracing::warn!("⚠️ memory_event_tx not available, falling back to sync generation");
+                        if let Err(e) = self.layer_manager.generate_all_layers(&uri, &args.content).await {
+                            tracing::warn!("Failed to generate layers for {}: {}", uri, e);
+                        }
+                    }
+                }
+                "session" => {
+                    // Session scope: Send LayerUpdateNeeded for the timeline directory
+                    // Layer generation is deferred to session close for efficiency
+                    // But we can optionally trigger incremental updates here
+                    if let Some(ref tx) = self.memory_event_tx {
+                        let thread_id = if args.thread_id.is_empty() {
+                            "default".to_string()
+                        } else {
+                            args.thread_id.clone()
+                        };
+                        let parent_dir = uri.rsplit_once('/')
+                            .map(|(dir, _)| dir.to_string())
+                            .unwrap_or_else(|| uri.clone());
+                        
+                        let _ = tx.send(MemoryEvent::LayerUpdateNeeded {
+                            scope: MemoryScope::Session,
+                            owner_id: thread_id,
+                            directory_uri: parent_dir,
+                            change_type: ChangeType::Add,
+                            changed_file: uri.clone(),
+                        });
+                        tracing::debug!("📤 Sent LayerUpdateNeeded event for session scope");
+                    }
+                    // Note: Session-level layers are primarily generated on session close
+                    // This event enables optional incremental updates
+                }
+                _ => {}
             }
         }
 
