@@ -5,7 +5,7 @@ use qdrant_client::{
         Condition, CreateCollection, DeletePoints, Distance, FieldCondition, Filter, GetPoints,
         Match, PointId, PointStruct, PointsIdsList, PointsSelector, Range, ScoredPoint,
         ScrollPoints, SearchPoints, UpsertPoints, VectorParams, VectorsConfig, condition, r#match,
-        point_id, points_selector, vectors_config, vectors_output,
+        point_id, points_selector, vector_output, vectors_config, vectors_output,
     },
 };
 use std::collections::HashMap;
@@ -553,15 +553,37 @@ impl QdrantVectorStore {
             .as_ref()
             .and_then(|v| v.vectors_options.as_ref())
             .and_then(|opts| match opts {
-                vectors_output::VectorsOptions::Vector(vec) => Some(vec.data.clone()),
+                vectors_output::VectorsOptions::Vector(vec) => {
+                    // Use the new vector enum instead of deprecated .data field
+                    match &vec.vector {
+                        Some(vector_output::Vector::Dense(dense)) => Some(dense.data.clone()),
+                        Some(vector_output::Vector::Sparse(sparse)) => Some(sparse.values.clone()),
+                        Some(vector_output::Vector::MultiDense(_)) => {
+                                // For multi-dense, flatten all vectors
+                                warn!("MultiDense vector not fully supported, using zero vector");
+                                None
+                            }
+                        None => None,
+                    }
+                }
                 vectors_output::VectorsOptions::Vectors(named) => {
                     // For named vectors, try to get the default "" vector first
                     named
                         .vectors
                         .get("")
-                        .cloned()
-                        .or_else(|| named.vectors.values().next().cloned())
-                        .map(|v| v.data)
+                        .and_then(|v| match &v.vector {
+                            Some(vector_output::Vector::Dense(dense)) => Some(dense.data.clone()),
+                            Some(vector_output::Vector::Sparse(sparse)) => Some(sparse.values.clone()),
+                            _ => None,
+                        })
+                        .or_else(|| {
+                            // Try any other named vector
+                            named.vectors.values().next().and_then(|v| match &v.vector {
+                                Some(vector_output::Vector::Dense(dense)) => Some(dense.data.clone()),
+                                Some(vector_output::Vector::Sparse(sparse)) => Some(sparse.values.clone()),
+                                _ => None,
+                            })
+                        })
                 }
             })
             .unwrap_or_else(|| {

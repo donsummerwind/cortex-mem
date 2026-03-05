@@ -188,6 +188,7 @@ pub struct SessionManager {
     filesystem: Arc<CortexFilesystem>,
     message_storage: MessageStorage,
     participant_manager: ParticipantManager,
+    #[allow(dead_code)]
     config: SessionConfig,
     llm_client: Option<Arc<dyn LLMClient>>,
     event_bus: Option<EventBus>,

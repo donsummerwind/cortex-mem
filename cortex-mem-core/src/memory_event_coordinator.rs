@@ -69,6 +69,7 @@ pub struct MemoryEventCoordinator {
     stats: Arc<RwLock<EventStats>>,
     /// Phase 2: Debouncer for layer updates
     debouncer: Option<Arc<LayerUpdateDebouncer>>,
+    #[allow(dead_code)]
     config: CoordinatorConfig,
     /// 任务计数器：跟踪正在处理的任务数量
     pending_tasks: Arc<AtomicUsize>,
@@ -107,7 +108,7 @@ impl MemoryEventCoordinator {
     /// 发送事件到协调器（增加 pending_tasks 计数）
     ///
     /// 这个方法应该在发送事件时调用，确保 flush_and_wait 能正确等待事件处理完成
-    pub fn send_event(&self, event: MemoryEvent) -> Result<()> {
+    pub fn send_event(&self, _event: MemoryEvent) -> Result<()> {
         // 先增加计数
         self.pending_tasks.fetch_add(1, Ordering::SeqCst);
         // 发送事件（通过内部 channel）
