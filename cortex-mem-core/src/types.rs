@@ -232,8 +232,9 @@ impl Filters {
 
     /// Create filters with a specific layer
     pub fn with_layer(layer: &str) -> Self {
-        let mut filters = Self::default();
-        filters.add_custom("layer", layer);
-        filters
+        Self {
+            layer: Some(layer.to_string()),
+            ..Default::default()
+        }
     }
 }
