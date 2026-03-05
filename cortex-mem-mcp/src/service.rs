@@ -128,6 +128,19 @@ pub struct GetAbstractResult {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct GetOverviewArgs {
+    /// URI of the memory
+    uri: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct GetOverviewResult {
+    success: bool,
+    uri: String,
+    overview_text: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GenerateLayersArgs {
     /// Thread/session ID (optional, if not provided, generates for all sessions)
     thread_id: Option<String>,
@@ -379,7 +392,7 @@ impl MemoryMcpService {
         }
     }
 
-    #[tool(description = "Get the abstract (L0 layer) of a memory")]
+    #[tool(description = "Get the L0 abstract (~100 tokens, for quick relevance checking) of a memory")]
     async fn get_abstract(
         &self,
         params: Parameters<GetAbstractArgs>,
@@ -398,6 +411,29 @@ impl MemoryMcpService {
             Err(e) => {
                 error!("Failed to get abstract: {}", e);
                 Err(format!("Failed to get abstract: {}", e))
+            }
+        }
+    }
+
+    #[tool(description = "Get the L1 overview (~2000 tokens, for understanding core information) of a memory")]
+    async fn get_overview(
+        &self,
+        params: Parameters<GetOverviewArgs>,
+    ) -> std::result::Result<Json<GetOverviewResult>, String> {
+        debug!("get_overview called with args: {:?}", params.0);
+
+        match self.operations.get_overview(&params.0.uri).await {
+            Ok(overview_result) => {
+                info!("Overview retrieved for: {}", params.0.uri);
+                Ok(Json(GetOverviewResult {
+                    success: true,
+                    uri: params.0.uri.clone(),
+                    overview_text: overview_result.overview_text,
+                }))
+            }
+            Err(e) => {
+                error!("Failed to get overview: {}", e);
+                Err(format!("Failed to get overview: {}", e))
             }
         }
     }
@@ -496,7 +532,7 @@ impl MemoryMcpService {
         }))
     }
 
-    #[tool(description = "Close a session and trigger final processing (L0/L1 generation, memory extraction, indexing)")]
+    #[tool(description = "Close a session and wait for final processing (L0/L1 generation, memory extraction, indexing)")]
     async fn close_session(
         &self,
         params: Parameters<CloseSessionArgs>,
@@ -507,14 +543,21 @@ impl MemoryMcpService {
         
         match self.operations.close_session(thread_id).await {
             Ok(_) => {
-                info!("Session closed successfully: {}", thread_id);
+                info!("Session closed, waiting for background tasks: {}", thread_id);
+                
+                // Wait for background memory extraction, L0/L1 generation, and indexing to complete
+                let completed = self.operations.flush_and_wait(Some(1)).await;
+                
+                let message = if completed {
+                    "Session closed. All background tasks (L0/L1 generation, memory extraction, indexing) completed successfully.".to_string()
+                } else {
+                    "Session closed. Background tasks initiated but may still be in progress.".to_string()
+                };
                 
                 Ok(Json(CloseSessionResult {
                     success: true,
                     thread_id: thread_id.clone(),
-                    message: format!(
-                        "Session closed. L0/L1 generation, memory extraction, and indexing initiated in background."
-                    ),
+                    message,
                 }))
             }
             Err(e) => {
@@ -534,14 +577,20 @@ impl ServerHandler for MemoryMcpService {
                 \n\
                 Available tools:\n\
                 - store_memory: Store a new memory\n\
-                - query_memory: Search memories using semantic search\n\
+                - query_memory: Search memories using layered semantic search (L0→L1→L2)\n\
                 - list_memories: List memories at a specific path\n\
-                - get_memory: Retrieve a specific memory\n\
+                - get_memory: Retrieve full content of a specific memory\n\
                 - delete_memory: Delete a memory\n\
-                - get_abstract: Get the abstract summary of a memory\n\
+                - get_abstract: Get L0 abstract (~100 tokens, for quick relevance checking)\n\
+                - get_overview: Get L1 overview (~2000 tokens, for understanding core information)\n\
                 - generate_layers: Generate L0/L1 layer files for memories (supports optional thread_id)\n\
                 - index_memories: Index memories to vector database (supports optional thread_id)\n\
-                - close_session: Close a session and trigger final processing\n\
+                - close_session: Close a session and wait for final processing\n\
+                \n\
+                Layered Access (L0/L1/L2):\n\
+                - L0 (Abstract): ~100 tokens, for quick relevance checking\n\
+                - L1 (Overview): ~2000 tokens, for understanding core information\n\
+                - L2 (Full Content): Complete content, only when detailed information is needed\n\
                 \n\
                 URI format: cortex://{dimension}/{category}/{resource}\n\
                 Examples:\n\
@@ -554,6 +603,7 @@ impl ServerHandler for MemoryMcpService {
                   * L0/L1 layer generation\n\
                   * Memory extraction\n\
                   * Vector indexing\n\
+                - close_session will wait for all background tasks to complete\n\
                 - Sessions are automatically created on first store_memory call\n\
                 - Each session has a unique thread_id for isolation"
                     .to_string(),
