@@ -5,7 +5,7 @@ use qdrant_client::{
         Condition, CreateCollection, DeletePoints, Distance, FieldCondition, Filter, GetPoints,
         Match, PointId, PointStruct, PointsIdsList, PointsSelector, Range, ScoredPoint,
         ScrollPoints, SearchPoints, UpsertPoints, VectorParams, VectorsConfig, condition, r#match,
-        point_id, points_selector, vectors_config, vectors_output,
+        point_id, points_selector, vector_output, vectors_config, vectors_output,
     },
 };
 use std::collections::HashMap;
@@ -238,9 +238,8 @@ impl QdrantVectorStore {
             payload.insert("role".to_string(), role.clone().into());
         }
 
-        let memory_type_str = format!("{:?}", memory.metadata.memory_type);
-        debug!("Storing memory type as string: '{}'", memory_type_str);
-        payload.insert("memory_type".to_string(), memory_type_str.into());
+        // Store layer (L0, L1, L2)
+        payload.insert("layer".to_string(), memory.metadata.layer.clone().into());
         payload.insert("hash".to_string(), memory.metadata.hash.clone().into());
         payload.insert(
             "importance_score".to_string(),
@@ -334,15 +333,12 @@ impl QdrantVectorStore {
             });
         }
 
-        if let Some(memory_type) = &filters.memory_type {
+        if let Some(layer) = &filters.layer {
             conditions.push(Condition {
                 condition_one_of: Some(condition::ConditionOneOf::Field(FieldCondition {
-                    key: "memory_type".to_string(),
+                    key: "layer".to_string(),
                     r#match: Some(Match {
-                        match_value: Some(r#match::MatchValue::Keyword(format!(
-                            "{:?}",
-                            memory_type
-                        ))),
+                        match_value: Some(r#match::MatchValue::Keyword(layer.clone())),
                     }),
                     ..Default::default()
                 })),
@@ -557,15 +553,37 @@ impl QdrantVectorStore {
             .as_ref()
             .and_then(|v| v.vectors_options.as_ref())
             .and_then(|opts| match opts {
-                vectors_output::VectorsOptions::Vector(vec) => Some(vec.data.clone()),
+                vectors_output::VectorsOptions::Vector(vec) => {
+                    // Use the new vector enum instead of deprecated .data field
+                    match &vec.vector {
+                        Some(vector_output::Vector::Dense(dense)) => Some(dense.data.clone()),
+                        Some(vector_output::Vector::Sparse(sparse)) => Some(sparse.values.clone()),
+                        Some(vector_output::Vector::MultiDense(_)) => {
+                                // For multi-dense, flatten all vectors
+                                warn!("MultiDense vector not fully supported, using zero vector");
+                                None
+                            }
+                        None => None,
+                    }
+                }
                 vectors_output::VectorsOptions::Vectors(named) => {
                     // For named vectors, try to get the default "" vector first
                     named
                         .vectors
                         .get("")
-                        .cloned()
-                        .or_else(|| named.vectors.values().next().cloned())
-                        .map(|v| v.data)
+                        .and_then(|v| match &v.vector {
+                            Some(vector_output::Vector::Dense(dense)) => Some(dense.data.clone()),
+                            Some(vector_output::Vector::Sparse(sparse)) => Some(sparse.values.clone()),
+                            _ => None,
+                        })
+                        .or_else(|| {
+                            // Try any other named vector
+                            named.vectors.values().next().and_then(|v| match &v.vector {
+                                Some(vector_output::Vector::Dense(dense)) => Some(dense.data.clone()),
+                                Some(vector_output::Vector::Sparse(sparse)) => Some(sparse.values.clone()),
+                                _ => None,
+                            })
+                        })
                 }
             })
             .unwrap_or_else(|| {
@@ -601,21 +619,19 @@ impl QdrantVectorStore {
             .map(|dt| dt.with_timezone(&chrono::Utc))
             .ok_or_else(|| Error::Other("Invalid updated_at timestamp".to_string()))?;
 
-        let memory_type = payload
-            .get("memory_type")
+        let layer = payload
+            .get("layer")
             .and_then(|v| match v {
                 qdrant_client::qdrant::Value {
                     kind: Some(qdrant_client::qdrant::value::Kind::StringValue(s)),
                 } => Some(s.as_str()),
                 _ => None,
             })
-            .map(|s| {
-                debug!("Parsing memory type from string: '{}'", s);
-                crate::types::MemoryType::parse(s)
-            })
+            .map(|s| s.to_string())
             .unwrap_or_else(|| {
-                warn!("No memory type found in payload, defaulting to Conversational");
-                crate::types::MemoryType::Conversational
+                // Backward compatibility: if layer not found, default to L2
+                debug!("No layer found in payload, defaulting to L2");
+                "L2".to_string()
             });
 
         let hash = payload
@@ -674,7 +690,7 @@ impl QdrantVectorStore {
                 } => Some(s.to_string()),
                 _ => None,
             }),
-            memory_type,
+            layer,
             hash,
             importance_score: payload
                 .get("importance_score")

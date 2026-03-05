@@ -2,18 +2,18 @@
 /// 提供Builder模式的一站式初始化接口
 use crate::{
     Result,
-    automation::{AutoExtractor, AutoIndexer, AutomationConfig, AutomationManager, IndexerConfig},
     embedding::{EmbeddingClient, EmbeddingConfig},
     events::EventBus,
     filesystem::CortexFilesystem,
     llm::LLMClient,
+    memory_event_coordinator::{CoordinatorConfig, MemoryEventCoordinator},
     session::{SessionConfig, SessionManager},
     vector_store::{QdrantVectorStore, VectorStore},
 };
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 /// 🎯 一站式初始化cortex-mem，包含自动化功能
 pub struct CortexMemBuilder {
@@ -21,8 +21,9 @@ pub struct CortexMemBuilder {
     embedding_config: Option<EmbeddingConfig>,
     qdrant_config: Option<crate::config::QdrantConfig>,
     llm_client: Option<Arc<dyn LLMClient>>,
-    automation_config: AutomationConfig,
     session_config: SessionConfig,
+    /// v2.5: 事件协调器配置
+    coordinator_config: Option<CoordinatorConfig>,
 }
 
 impl CortexMemBuilder {
@@ -33,8 +34,8 @@ impl CortexMemBuilder {
             embedding_config: None,
             qdrant_config: None,
             llm_client: None,
-            automation_config: AutomationConfig::default(),
             session_config: SessionConfig::default(),
+            coordinator_config: None,
         }
     }
 
@@ -56,24 +57,21 @@ impl CortexMemBuilder {
         self
     }
 
-    /// 配置自动化行为
-    pub fn with_automation(mut self, config: AutomationConfig) -> Self {
-        self.automation_config = config;
-        self
-    }
-
     /// 配置会话管理
     pub fn with_session_config(mut self, config: SessionConfig) -> Self {
         self.session_config = config;
         self
     }
 
+    /// v2.5: 配置事件协调器
+    pub fn with_coordinator_config(mut self, config: CoordinatorConfig) -> Self {
+        self.coordinator_config = Some(config);
+        self
+    }
+
     /// 🎯 构建完整的cortex-mem实例
     pub async fn build(self) -> Result<CortexMem> {
-        info!(
-            "Building Cortex Memory with automation enabled: {}",
-            self.automation_config.auto_index || self.automation_config.auto_extract
-        );
+        info!("Building Cortex Memory with v2.5 incremental update support");
 
         // 1. 初始化文件系统
         let filesystem = Arc::new(CortexFilesystem::new(
@@ -111,81 +109,117 @@ impl CortexMemBuilder {
             None
         };
 
-        // 4. 创建事件总线
-        let (event_bus, event_rx) = EventBus::new();
+        // 4. 创建事件总线（用于向后兼容）
+        let (event_bus, _old_event_rx) = EventBus::new();
         let event_bus = Arc::new(event_bus);
 
-        // 5. 创建SessionManager（带事件总线）
-        let session_manager = if let Some(ref llm) = self.llm_client {
-            SessionManager::with_llm_and_events(
-                filesystem.clone(),
-                self.session_config,
-                llm.clone(),
-                event_bus.as_ref().clone(),
-            )
-        } else {
-            SessionManager::with_event_bus(
-                filesystem.clone(),
-                self.session_config,
-                event_bus.as_ref().clone(),
-            )
-        };
-
-        // 6. 创建AutomationManager（如果配置了）
-        let automation_handle = if self.automation_config.auto_index
-            || self.automation_config.auto_extract
-        {
-            // 需要同时有embedding和qdrant_config才能创建AutoIndexer
-            if let (Some(emb), Some(cfg)) = (&embedding, &self.qdrant_config) {
-                // 🔧 移除ref
-                // 创建AutoIndexer
-                let indexer_config = IndexerConfig {
-                    auto_index: true,
-                    batch_size: 10,
-                    async_index: false,
-                };
-
-                // 重新创建QdrantVectorStore用于AutoIndexer
-                let qdrant_store = QdrantVectorStore::new(cfg).await?;
-                let indexer = Arc::new(AutoIndexer::new(
-                    filesystem.clone(),
-                    emb.clone(),
-                    Arc::new(qdrant_store),
-                    indexer_config,
-                ));
-
-                // 创建AutoExtractor（如果有LLM）
-                let extractor = if let (Some(llm), true) =
-                    (&self.llm_client, self.automation_config.auto_extract)
-                {
-                    Some(Arc::new(AutoExtractor::new(
-                        filesystem.clone(),
-                        llm.clone(),
-                        Default::default(),
-                    )))
-                } else {
-                    None
-                };
-
-                // 启动AutomationManager
-                let manager = AutomationManager::new(indexer, extractor, self.automation_config);
-
-                // 在后台启动
-                info!("Starting AutomationManager in background");
-                let handle = tokio::spawn(async move {
-                    if let Err(e) = manager.start(event_rx).await {
-                        error!("AutomationManager failed: {}", e);
+        // 5. v2.5: 创建 MemoryEventCoordinator（如果配置了所有必需组件）
+        let (coordinator_handle, memory_event_tx) = 
+            if let (Some(llm), Some(emb), Some(_vs)) = 
+                (&self.llm_client, &embedding, &vector_store) 
+            {
+                // 将 VectorStore trait object 转换为 QdrantVectorStore
+                // 由于我们需要具体类型，这里重新从配置创建
+                let qdrant_store = if let Some(ref cfg) = self.qdrant_config {
+                    match QdrantVectorStore::new(cfg).await {
+                        Ok(store) => Arc::new(store),
+                        Err(e) => {
+                            warn!("Failed to create QdrantVectorStore for coordinator: {}", e);
+                            let fs = filesystem.clone();
+                            return Ok(CortexMem {
+                                filesystem: fs.clone(),
+                                session_manager: Arc::new(RwLock::new(
+                                    SessionManager::with_event_bus(
+                                        fs,
+                                        self.session_config,
+                                        event_bus.as_ref().clone(),
+                                    )
+                                )),
+                                embedding,
+                                vector_store,
+                                llm_client: self.llm_client,
+                                event_bus,
+                                coordinator_handle: None,
+                            });
+                        }
                     }
-                });
+                } else {
+                    warn!("No Qdrant config available for coordinator");
+                    let fs = filesystem.clone();
+                    return Ok(CortexMem {
+                        filesystem: fs.clone(),
+                        session_manager: Arc::new(RwLock::new(
+                            SessionManager::with_event_bus(
+                                fs,
+                                self.session_config,
+                                event_bus.as_ref().clone(),
+                            )
+                        )),
+                        embedding,
+                        vector_store,
+                        llm_client: self.llm_client,
+                        event_bus,
+                        coordinator_handle: None,
+                    });
+                };
 
-                Some(handle)
+                let config = self.coordinator_config.unwrap_or_default();
+                let (coordinator, tx, rx) = MemoryEventCoordinator::new_with_config(
+                    filesystem.clone(),
+                    llm.clone(),
+                    emb.clone(),
+                    qdrant_store,
+                    config,
+                );
+
+                // 启动事件协调器
+                let handle = tokio::spawn(coordinator.start(rx));
+                info!("✅ MemoryEventCoordinator started for v2.5 incremental updates");
+
+                (Some(handle), Some(tx))
             } else {
-                warn!("Automation disabled: missing embedding or qdrant configuration");
-                None
+                warn!("MemoryEventCoordinator disabled: missing LLM, embedding, or vector store");
+                (None, None)
+            };
+
+        // 6. 创建SessionManager（带 v2.5 memory_event_tx）
+        let session_manager = if let Some(tx) = memory_event_tx {
+            // v2.5: 使用 MemoryEventCoordinator 的事件通道
+            if let Some(ref llm) = self.llm_client {
+                SessionManager::with_llm_and_events(
+                    filesystem.clone(),
+                    self.session_config,
+                    llm.clone(),
+                    event_bus.as_ref().clone(),
+                )
+                .with_memory_event_tx(tx)
+            } else {
+                SessionManager::with_event_bus(
+                    filesystem.clone(),
+                    self.session_config,
+                    event_bus.as_ref().clone(),
+                )
+                .with_memory_event_tx(tx)
             }
         } else {
-            None
+            // 回退到旧的事件总线机制
+            if let Some(ref llm) = self.llm_client {
+                SessionManager::with_llm_and_events(
+                    filesystem.clone(),
+                    self.session_config,
+                    llm.clone(),
+                    event_bus.as_ref().clone(),
+                )
+            } else {
+                SessionManager::with_event_bus(
+                    filesystem.clone(),
+                    self.session_config,
+                    event_bus.as_ref().clone(),
+                )
+            }
         };
+
+        info!("✅ CortexMem initialized successfully");
 
         Ok(CortexMem {
             filesystem,
@@ -194,7 +228,7 @@ impl CortexMemBuilder {
             vector_store,
             llm_client: self.llm_client,
             event_bus,
-            automation_handle,
+            coordinator_handle,
         })
     }
 }
@@ -208,7 +242,8 @@ pub struct CortexMem {
     pub llm_client: Option<Arc<dyn LLMClient>>,
     #[allow(dead_code)]
     event_bus: Arc<EventBus>,
-    automation_handle: Option<tokio::task::JoinHandle<()>>,
+    /// v2.5: MemoryEventCoordinator 的后台任务句柄
+    coordinator_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl CortexMem {
@@ -241,9 +276,10 @@ impl CortexMem {
     pub async fn shutdown(self) -> Result<()> {
         info!("Shutting down CortexMem...");
 
-        if let Some(handle) = self.automation_handle {
+        // 停止 MemoryEventCoordinator
+        if let Some(handle) = self.coordinator_handle {
             handle.abort();
-            info!("Automation manager stopped");
+            info!("MemoryEventCoordinator stopped");
         }
 
         Ok(())

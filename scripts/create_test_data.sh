@@ -45,13 +45,13 @@ for i in {1..5}; do
   MSG_ID=$(uuidgen | tr '[:upper:]' '[:lower:]' | cut -d'-' -f1)
   TIMESTAMP=$(date -u +"%H_%M_%S")_$MSG_ID
   MSG_FILE="$TIMELINE_DIR/${TIMESTAMP}.md"
-  
+
   ROLE=$( [ $((i % 2)) -eq 0 ] && echo "assistant" || echo "user" )
-  
+
   cat > "$MSG_FILE" << EOF
 # $ROLE Message
 
-**ID**: \`$MSG_ID\`  
+**ID**: \`$MSG_ID\`
 **Timestamp**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
 ## 内容
@@ -64,14 +64,14 @@ for i in {1..5}; do
 - 分布式记忆管理
 
 ### 详细内容
-Cortex Memory 采用了类似 OpenViking 的三层递进架构：
+Cortex Memory 采用了三层递进架构：
 - **L0 (Abstract)**: 简洁摘要，~100 tokens，用于快速过滤
 - **L1 (Overview)**: 结构化概览，~500-2000 tokens，用于决策
 - **L2 (Detail)**: 完整内容，原始数据
 
 这种设计能够在大规模记忆库中高效检索相关信息。
 EOF
-  
+
   echo "✅ 创建消息 $i: $(basename $MSG_FILE)"
   sleep 0.1
 done

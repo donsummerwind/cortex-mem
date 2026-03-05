@@ -1,4 +1,4 @@
-// MCP Tool Definitions - OpenViking style
+// MCP Tool Definitions
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

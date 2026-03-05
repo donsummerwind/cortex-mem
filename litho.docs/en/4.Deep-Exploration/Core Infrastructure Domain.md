@@ -51,7 +51,7 @@ Application Interfaces → Core Infrastructure → External Systems (LLM, Qdrant
 **Location:** `cortex-mem-core/src/filesystem/`  
 **Key Files:** `uri.rs`, `operations.rs`
 
-Provides an asynchronous, trait-based virtual filesystem implementing the OpenViking/TARS memory organization specification.
+Provides an asynchronous, trait-based virtual filesystem implementing the TARS memory organization specification.
 
 **Capabilities:**
 - **URI Scheme**: Hierarchical addressing (`cortex://{dimension}/{category}/{resource}`)

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tracing::{error, info};
 
 mod service;
-use service::MemoryMcpService;
+use service::{AutoTriggerConfig, MemoryMcpService};
 
 #[derive(Parser)]
 #[command(name = "cortex-mem-mcp")]
@@ -24,6 +24,22 @@ struct Cli {
     /// Tenant identifier for memory operations
     #[arg(long, default_value = "default")]
     tenant: String,
+
+    /// Message count threshold for auto-trigger (default: 10)
+    #[arg(long, default_value = "10")]
+    auto_trigger_threshold: usize,
+
+    /// Minimum interval between auto-trigger in seconds (default: 300)
+    #[arg(long, default_value = "300")]
+    auto_trigger_interval: u64,
+
+    /// Inactivity timeout for auto-trigger in seconds (default: 120)
+    #[arg(long, default_value = "120")]
+    auto_trigger_inactivity: u64,
+
+    /// Disable auto-trigger feature
+    #[arg(long, default_value = "false")]
+    no_auto_trigger: bool,
 }
 
 #[tokio::main]
@@ -76,8 +92,28 @@ async fn main() -> Result<()> {
     let operations = Arc::new(operations);
     info!("MemoryOperations initialized successfully");
 
-    // Create the MCP service
-    let service = MemoryMcpService::new(operations);
+    // Build auto-trigger configuration from CLI args
+    let auto_trigger_config = AutoTriggerConfig {
+        message_count_threshold: cli.auto_trigger_threshold,
+        min_process_interval_secs: cli.auto_trigger_interval,
+        inactivity_timeout_secs: cli.auto_trigger_inactivity,
+        enable_auto_trigger: !cli.no_auto_trigger,
+    };
+    info!(
+        "Auto-trigger config: threshold={}, interval={}s, inactivity={}s, enabled={}",
+        auto_trigger_config.message_count_threshold,
+        auto_trigger_config.min_process_interval_secs,
+        auto_trigger_config.inactivity_timeout_secs,
+        auto_trigger_config.enable_auto_trigger
+    );
+
+    // Create the MCP service with auto-trigger support
+    let service = MemoryMcpService::with_config(operations, auto_trigger_config);
+
+    // Start the inactivity checker for auto-triggering
+    if auto_trigger_config.enable_auto_trigger {
+        service.start_inactivity_checker();
+    }
 
     // Serve the MCP service
     let running_service = service

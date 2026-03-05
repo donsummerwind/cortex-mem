@@ -1,12 +1,10 @@
 use crate::{
     Result,
-    extraction::MemoryExtractor,
     filesystem::CortexFilesystem,
     llm::LLMClient,
-    session::SessionManager,
 };
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
 
 /// 会话自动提取配置
 #[derive(Debug, Clone)]
@@ -38,18 +36,15 @@ pub struct AutoExtractStats {
 
 /// 会话自动提取器
 ///
-/// 🔧 简化版本：移除了profile.json相关代码
-/// 现在所有记忆统一由SessionManager的MemoryExtractor处理
+/// v2.5: 此结构体已被简化，记忆提取现在由 SessionManager 通过 MemoryEventCoordinator 处理。
+/// 保留此结构体仅用于向后兼容。
 pub struct AutoExtractor {
     #[allow(dead_code)]
     filesystem: Arc<CortexFilesystem>,
     #[allow(dead_code)]
     llm: Arc<dyn LLMClient>,
     #[allow(dead_code)]
-    extractor: MemoryExtractor,
-    #[allow(dead_code)]
     config: AutoExtractConfig,
-    /// 用户ID（保留用于兼容性）
     user_id: String,
 }
 
@@ -60,13 +55,9 @@ impl AutoExtractor {
         llm: Arc<dyn LLMClient>,
         config: AutoExtractConfig,
     ) -> Self {
-        let extraction_config = crate::extraction::ExtractionConfig::default();
-        let extractor = MemoryExtractor::new(filesystem.clone(), llm.clone(), extraction_config);
-
         Self {
             filesystem,
             llm,
-            extractor,
             config,
             user_id: "default".to_string(),
         }
@@ -79,13 +70,9 @@ impl AutoExtractor {
         config: AutoExtractConfig,
         user_id: impl Into<String>,
     ) -> Self {
-        let extraction_config = crate::extraction::ExtractionConfig::default();
-        let extractor = MemoryExtractor::new(filesystem.clone(), llm.clone(), extraction_config);
-
         Self {
             filesystem,
             llm,
-            extractor,
             config,
             user_id: user_id.into(),
         }
@@ -96,51 +83,19 @@ impl AutoExtractor {
         self.user_id = user_id.into();
     }
 
-    /// 🔧 简化:extract_session现在只需要直接使用SessionManager处理即可
-    /// AutoExtractor不再负责用户记忆提取(由MemoryExtractor统一处理)
+    /// 提取会话记忆
+    ///
+    /// v2.5: 此方法已被废弃。记忆提取现在由 SessionManager::close_session 通过
+    /// MemoryEventCoordinator 异步处理。此方法返回空统计用于向后兼容。
     pub async fn extract_session(&self, _thread_id: &str) -> Result<AutoExtractStats> {
-        info!("AutoExtractor::extract_session is deprecated - all memory extraction is now handled by SessionManager::close_session");
-        warn!("Use SessionManager::close_session instead. This method returns empty stats for compatibility.");
-        
+        info!(
+            "AutoExtractor::extract_session is deprecated - memory extraction is handled by MemoryEventCoordinator"
+        );
         Ok(AutoExtractStats::default())
     }
-}
 
-/// 增强SessionManager支持自动提取
-pub struct AutoSessionManager {
-    session_manager: SessionManager,
-    #[allow(dead_code)]
-    auto_extractor: AutoExtractor,
-}
-
-impl AutoSessionManager {
-    /// 创建新的自动会话管理器
-    pub fn new(
-        session_manager: SessionManager,
-        auto_extractor: AutoExtractor,
-    ) -> Self {
-        Self {
-            session_manager,
-            auto_extractor,
-        }
-    }
-
-    /// 获取内部的 SessionManager
-    pub fn session_manager(&self) -> &SessionManager {
-        &self.session_manager
-    }
-
-    /// 获取可变的 SessionManager
-    pub fn session_manager_mut(&mut self) -> &mut SessionManager {
-        &mut self.session_manager
-    }
-
-    /// 关闭会话并自动提取（增强版）
-    pub async fn close_session(&mut self, thread_id: &str) -> Result<()> {
-        // 先通过SessionManager关闭会话(触发timeline和记忆提取)
-        self.session_manager.close_session(thread_id).await?;
-        
-        info!("Session {} closed with automatic memory extraction via SessionManager", thread_id);
-        Ok(())
+    /// 获取用户ID
+    pub fn user_id(&self) -> &str {
+        &self.user_id
     }
 }

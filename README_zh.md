@@ -111,6 +111,7 @@ cortex://resources/{resource_name}/
 - <strong>会话管理：</strong> 跟踪对话时间线、参与者和消息历史，具有自动索引和事件驱动处理。
 - <strong>多租户支持：</strong> 通过租户感知集合命名，在单个部署中为不同用户和代理提供隔离的内存空间。
 - <strong>事件驱动自动化：</strong> 文件监视器和自动索引器用于后台处理、同步和配置文件丰富。
+- <strong>LLM结果缓存：</strong> 智能缓存采用LRU淘汰和TTL过期机制，减少50-75%的冗余LLM API调用，级联层防抖可减少70-90%的层更新调用。
 - <strong>代理框架集成：</strong> 内置支持Rig框架和模型上下文协议（MCP）。
 - <strong>Web仪表板：</strong> Svelte 5 SPA（Insights）用于监控、租户管理和语义搜索可视化。
 

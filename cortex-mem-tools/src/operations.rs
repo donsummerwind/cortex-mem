@@ -19,7 +19,7 @@ use cortex_mem_core::{
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// High-level memory operations with OpenViking-style tiered access
+/// High-level memory operations
 ///
 /// All operations require:
 /// - LLM client for layer generation
@@ -41,6 +41,13 @@ pub struct MemoryOperations {
 
     pub(crate) default_user_id: String,
     pub(crate) default_agent_id: String,
+
+    /// v2.5: 事件发送器，用于异步触发层级生成
+    pub(crate) memory_event_tx:
+        Option<tokio::sync::mpsc::UnboundedSender<cortex_mem_core::memory_events::MemoryEvent>>,
+
+    /// v2.5: 事件协调器引用，用于等待后台任务完成
+    pub(crate) event_coordinator: Option<Arc<cortex_mem_core::MemoryEventCoordinator>>,
 }
 
 impl MemoryOperations {
@@ -74,6 +81,24 @@ impl MemoryOperations {
         self.auto_indexer.as_ref()
     }
 
+    /// Get the default user ID
+    pub fn default_user_id(&self) -> &str {
+        &self.default_user_id
+    }
+
+    /// Get the default agent ID
+    pub fn default_agent_id(&self) -> &str {
+        &self.default_agent_id
+    }
+
+    /// Get the memory event sender (for triggering processing)
+    pub fn memory_event_tx(
+        &self,
+    ) -> Option<&tokio::sync::mpsc::UnboundedSender<cortex_mem_core::memory_events::MemoryEvent>>
+    {
+        self.memory_event_tx.as_ref()
+    }
+
     /// Create from data directory with tenant isolation, LLM support, and vector search
     ///
     /// This is the primary constructor that requires all dependencies.
@@ -97,20 +122,7 @@ impl MemoryOperations {
         // 创建EventBus用于自动化
         let (event_bus, mut event_rx_main) = EventBus::new();
 
-        let config = SessionConfig::default();
-        // 使用with_llm_and_events创建SessionManager
-        let session_manager = SessionManager::with_llm_and_events(
-            filesystem.clone(),
-            config,
-            llm_client.clone(),
-            event_bus.clone(),
-        );
-        let session_manager = Arc::new(RwLock::new(session_manager));
-
-        // LLM-enabled LayerManager for high-quality L0/L1 generation
-        let layer_manager = Arc::new(LayerManager::new(filesystem.clone(), llm_client.clone()));
-
-        // Initialize Qdrant
+        // Initialize Qdrant first (needed for MemoryEventCoordinator)
         tracing::info!("Initializing Qdrant vector store: {}", qdrant_url);
         let qdrant_config = cortex_mem_core::QdrantConfig {
             url: qdrant_url.to_string(),
@@ -120,7 +132,7 @@ impl MemoryOperations {
             api_key: qdrant_api_key
                 .map(|s| s.to_string())
                 .or_else(|| std::env::var("QDRANT_API_KEY").ok()),
-            tenant_id: Some(tenant_id.clone()),  // 设置租户ID
+            tenant_id: Some(tenant_id.clone()), // 设置租户ID
         };
         let vector_store = Arc::new(QdrantVectorStore::new(&qdrant_config).await?);
         tracing::info!(
@@ -128,7 +140,7 @@ impl MemoryOperations {
             qdrant_config.get_collection_name()
         );
 
-        // Initialize Embedding client
+        // Initialize Embedding client (needed for MemoryEventCoordinator)
         tracing::info!(
             "Initializing Embedding client with model: {}",
             embedding_model_name
@@ -142,6 +154,35 @@ impl MemoryOperations {
         };
         let embedding_client = Arc::new(EmbeddingClient::new(embedding_config)?);
         tracing::info!("Embedding client initialized");
+
+        // v2.5: Create MemoryEventCoordinator BEFORE SessionManager
+        let (coordinator, memory_event_tx, event_rx) = cortex_mem_core::MemoryEventCoordinator::new(
+            filesystem.clone(),
+            llm_client.clone(),
+            embedding_client.clone(),
+            vector_store.clone(),
+        );
+
+        // 保存 coordinator 克隆用于后台任务等待
+        let coordinator_clone = coordinator.clone();
+
+        // Start the coordinator event loop in background
+        tokio::spawn(coordinator.start(event_rx));
+        tracing::info!("MemoryEventCoordinator started for v2.5 incremental updates");
+
+        let config = SessionConfig::default();
+        // Create SessionManager with memory_event_tx for v2.5 integration
+        let session_manager = SessionManager::with_llm_and_events(
+            filesystem.clone(),
+            config,
+            llm_client.clone(),
+            event_bus.clone(),
+        )
+        .with_memory_event_tx(memory_event_tx.clone());
+        let session_manager = Arc::new(RwLock::new(session_manager));
+
+        // LLM-enabled LayerManager for high-quality L0/L1 generation
+        let layer_manager = Arc::new(LayerManager::new(filesystem.clone(), llm_client.clone()));
 
         // Create vector search engine with LLM support for query rewriting
         let vector_engine = Arc::new(VectorSearchEngine::with_llm(
@@ -158,7 +199,7 @@ impl MemoryOperations {
         // 🔧 创建AutoExtractor(简化配置，移除了save_user_memories和save_agent_memories)
         let auto_extract_config = AutoExtractConfig {
             min_message_count: 5,
-            extract_on_close: true, // 🔧 显式设置为true，确保会话关闭时自动提取记忆
+            extract_on_close: false, // v2.5: 禁用旧机制，使用新的 MemoryEventCoordinator
         };
         let auto_extractor = Arc::new(AutoExtractor::with_user_id(
             filesystem.clone(),
@@ -324,6 +365,12 @@ impl MemoryOperations {
 
             default_user_id: actual_user_id,
             default_agent_id: tenant_id.clone(),
+
+            // v2.5: 保存事件发送器
+            memory_event_tx: Some(memory_event_tx),
+
+            // v2.5: 保存事件协调器引用，用于等待后台任务完成
+            event_coordinator: Some(coordinator_clone),
         })
     }
 
@@ -661,6 +708,60 @@ impl MemoryOperations {
                 tracing::error!("❌ 会话 {} 索引失败: {}", session_id, e);
                 Err(e.into())
             }
+        }
+    }
+
+    /// 等待所有后台异步任务完成
+    ///
+    /// 这个方法会等待 MemoryEventCoordinator 处理完所有待处理的事件。
+    /// 由于 SessionClosed 事件会触发 LLM 调用（记忆提取 + 层级生成），
+    /// 这个方法会等待足够长的时间让这些操作完成。
+    ///
+    /// # Arguments
+    /// * `max_wait_secs` - 最大等待时间（秒）
+    ///
+    /// # Returns
+    /// 返回是否成功完成（true = 完成，false = 超时）
+    ///
+    /// # Note
+    /// v2.5 改进：使用真正的事件通知机制等待后台任务完成
+    /// 而不是基于时间的启发式等待
+    pub async fn wait_for_background_tasks(&self, max_wait_secs: u64) -> bool {
+        use std::time::Duration;
+
+        if let Some(ref coordinator) = self.event_coordinator {
+            // 使用真正的事件通知机制
+            coordinator
+                .wait_for_completion(Duration::from_secs(max_wait_secs))
+                .await
+        } else {
+            // 降级：如果没有 coordinator，使用简单的等待
+            log::warn!("⚠️ MemoryEventCoordinator 未初始化，使用简单等待");
+            tokio::time::sleep(Duration::from_secs(max_wait_secs.min(5))).await;
+            true
+        }
+    }
+
+    /// 刷新并等待所有后台任务完成（用于退出流程）
+    ///
+    /// 这个方法会：
+    /// 1. 等待当前正在处理的事件完成
+    /// 2. 强制处理 debouncer 中所有待处理的层级更新
+    /// 3. 再次等待确保所有更新完成
+    ///
+    /// 使用事件通知机制而非固定超时，确保真正等待任务完成。
+    /// 由于涉及 LLM 调用，可能需要较长时间。
+    ///
+    /// # Arguments
+    /// * `check_interval_secs` - 检查间隔（秒），默认 1 秒
+    pub async fn flush_and_wait(&self, check_interval_secs: Option<u64>) -> bool {
+        let interval = std::time::Duration::from_secs(check_interval_secs.unwrap_or(1));
+
+        if let Some(ref coordinator) = self.event_coordinator {
+            coordinator.flush_and_wait(interval).await
+        } else {
+            log::warn!("⚠️ MemoryEventCoordinator 未初始化，跳过等待");
+            true
         }
     }
 }

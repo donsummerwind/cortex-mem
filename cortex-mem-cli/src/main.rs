@@ -87,6 +87,10 @@ enum Commands {
         /// Show abstract (L0) instead of full content
         #[arg(short, long)]
         abstract_only: bool,
+
+        /// Show overview (L1) instead of full content
+        #[arg(short, long)]
+        overview: bool,
     },
 
     /// Delete a memory
@@ -130,6 +134,12 @@ enum SessionAction {
         /// Session title
         #[arg(short, long)]
         title: Option<String>,
+    },
+
+    /// Close a session and trigger memory extraction, layer generation, and indexing
+    Close {
+        /// Thread ID to close
+        thread: String,
     },
 }
 
@@ -252,8 +262,8 @@ async fn main() -> Result<()> {
         } => {
             list::execute(operations, uri.as_deref(), include_abstracts).await?;
         }
-        Commands::Get { uri, abstract_only } => {
-            get::execute(operations, &uri, abstract_only).await?;
+        Commands::Get { uri, abstract_only, overview } => {
+            get::execute(operations, &uri, abstract_only, overview).await?;
         }
         Commands::Delete { uri } => {
             delete::execute(operations, &uri).await?;
@@ -264,6 +274,9 @@ async fn main() -> Result<()> {
             }
             SessionAction::Create { thread, title } => {
                 session::create(operations, &thread, title.as_deref()).await?;
+            }
+            SessionAction::Close { thread } => {
+                session::close(operations, &thread).await?;
             }
         },
         Commands::Stats => {

@@ -1,6 +1,6 @@
 # Cortex Memory Tools Library
 
-`cortex-mem-tools` provides high-level abstractions and utilities for working with the Cortex Memory system. It offers simplified APIs for common operations with OpenViking-style tiered access (L0/L1/L2 layers).
+`cortex-mem-tools` provides high-level abstractions and utilities for working with the Cortex Memory system. It offers simplified APIs for common operations three tiered access (L0/L1/L2 layers).
 
 ## 🛠️ Overview
 
@@ -136,7 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Tiered Access (OpenViking Style)
+### Tiered Access
 
 | Layer | Size | Purpose | Method |
 |-------|------|---------|--------|

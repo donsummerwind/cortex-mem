@@ -4,7 +4,7 @@ pub struct Prompts;
 impl Prompts {
     /// Prompt for generating L0 abstract
     ///
-    /// Based on OpenViking design: ~100 tokens for quick relevance checking and filtering
+    /// ~100 tokens for quick relevance checking and filtering
     pub fn abstract_generation(content: &str) -> String {
         format!(
             r#"Generate a concise abstract (~100 tokens maximum) for the following content.
@@ -33,7 +33,7 @@ Abstract (max 100 tokens, in the same language as the content):"#,
 
     /// Prompt for generating L1 overview
     ///
-    /// Based on OpenViking design: ~2K tokens, structured overview
+    /// ~2K tokens, structured overview
     /// for decision-making and planning
     pub fn overview_generation(content: &str) -> String {
         format!(

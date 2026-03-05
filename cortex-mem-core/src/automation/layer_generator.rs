@@ -101,12 +101,25 @@ impl LayerGenerator {
             let scope_uri = format!("cortex://{}", scope);
 
             // 检查维度是否存在
-            if self.filesystem.exists(&scope_uri).await? {
-                match self.scan_scope(&scope_uri).await {
-                    Ok(dirs) => directories.extend(dirs),
-                    Err(e) => {
-                        warn!("Failed to scan scope {}: {}", scope, e);
+            match self.filesystem.exists(&scope_uri).await {
+                Ok(true) => {
+                    log::info!("📂 扫描维度: {} ({})", scope, scope_uri);
+                    match self.scan_scope(&scope_uri).await {
+                        Ok(dirs) => {
+                            log::info!("📂 维度 {} 发现 {} 个目录", scope, dirs.len());
+                            directories.extend(dirs);
+                        }
+                        Err(e) => {
+                            log::warn!("⚠️ 扫描维度 {} 失败: {}", scope, e);
+                            warn!("Failed to scan scope {}: {}", scope, e);
+                        }
                     }
+                }
+                Ok(false) => {
+                    log::info!("📂 维度 {} 不存在，跳过", scope);
+                }
+                Err(e) => {
+                    log::warn!("⚠️ 检查维度 {} 存在性失败: {}", scope, e);
                 }
             }
         }
@@ -117,6 +130,36 @@ impl LayerGenerator {
     /// 扫描单个维度
     async fn scan_scope(&self, scope_uri: &str) -> Result<Vec<String>> {
         let mut directories = Vec::new();
+        
+        // 先检查维度是否存在
+        match self.filesystem.exists(scope_uri).await {
+            Ok(true) => {
+                log::info!("📂 维度目录存在: {}", scope_uri);
+            }
+            Ok(false) => {
+                log::info!("📂 维度目录不存在: {}", scope_uri);
+                return Ok(directories);
+            }
+            Err(e) => {
+                log::warn!("⚠️ 检查维度存在性失败: {} - {}", scope_uri, e);
+                return Ok(directories);
+            }
+        }
+        
+        // 尝试列出目录内容
+        match self.filesystem.list(scope_uri).await {
+            Ok(entries) => {
+                log::info!("📂 维度 {} 下有 {} 个条目", scope_uri, entries.len());
+                for entry in &entries {
+                    log::info!("📂   - {} (is_dir: {})", entry.name, entry.is_directory);
+                }
+            }
+            Err(e) => {
+                log::warn!("⚠️ 列出维度目录失败: {} - {}", scope_uri, e);
+                return Ok(directories);
+            }
+        }
+        
         self.scan_recursive(scope_uri, &mut directories).await?;
         Ok(directories)
     }
@@ -189,13 +232,29 @@ impl LayerGenerator {
 
     /// 确保所有目录拥有 L0/L1
     pub async fn ensure_all_layers(&self) -> Result<GenerationStats> {
+        log::info!("🔍 开始扫描目录...");
         info!("开始扫描目录...");
         let directories = self.scan_all_directories().await?;
+        log::info!("📋 发现 {} 个目录", directories.len());
         info!("发现 {} 个目录", directories.len());
+        
+        // 🔧 Debug: 打印扫描到的目录
+        for dir in &directories {
+            log::debug!("扫描到目录: {}", dir);
+            debug!("扫描到目录: {}", dir);
+        }
 
+        log::info!("🔎 检测缺失的 L0/L1...");
         info!("检测缺失的 L0/L1...");
         let missing = self.filter_missing_layers(&directories).await?;
+        log::info!("📋 发现 {} 个目录缺失 L0/L1", missing.len());
         info!("发现 {} 个目录缺失 L0/L1", missing.len());
+        
+        // 🔧 Debug: 打印缺失层级文件的目录
+        for dir in &missing {
+            log::info!("📝 需要生成层级文件: {}", dir);
+            info!("需要生成层级文件: {}", dir);
+        }
 
         if missing.is_empty() {
             return Ok(GenerationStats {
@@ -215,16 +274,19 @@ impl LayerGenerator {
         let total_batches = (missing.len() + self.config.batch_size - 1) / self.config.batch_size;
 
         for (batch_idx, batch) in missing.chunks(self.config.batch_size).enumerate() {
+            log::info!("📦 处理批次 {}/{}", batch_idx + 1, total_batches);
             info!("处理批次 {}/{}", batch_idx + 1, total_batches);
 
             for dir in batch {
                 match self.generate_layers_for_directory(dir).await {
                     Ok(_) => {
                         stats.generated += 1;
+                        log::info!("✅ 生成成功: {}", dir);
                         info!("✓ 生成成功: {}", dir);
                     }
                     Err(e) => {
                         stats.failed += 1;
+                        log::warn!("⚠️ 生成失败: {} - {}", dir, e);
                         warn!("✗ 生成失败: {} - {}", dir, e);
                     }
                 }
@@ -236,6 +298,7 @@ impl LayerGenerator {
             }
         }
 
+        log::info!("✅ 生成完成: 成功 {}, 失败 {}", stats.generated, stats.failed);
         info!("生成完成: 成功 {}, 失败 {}", stats.generated, stats.failed);
         Ok(stats)
     }

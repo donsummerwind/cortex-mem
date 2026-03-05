@@ -1,11 +1,10 @@
 use crate::events::{CortexEvent, EventBus, SessionEvent};
 use crate::llm::LLMClient;
-use crate::session::extraction::MemoryExtractor;
 use crate::{CortexFilesystem, FilesystemOperations, MessageStorage, ParticipantManager, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Session status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -158,7 +157,6 @@ impl SessionMetadata {
 /// Session configuration
 #[derive(Debug, Clone)]
 pub struct SessionConfig {
-    pub auto_extract_on_close: bool,
     pub max_messages_per_session: Option<usize>,
     pub auto_archive_after_days: Option<i64>,
 }
@@ -166,7 +164,6 @@ pub struct SessionConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
-            auto_extract_on_close: true,
             max_messages_per_session: None,
             auto_archive_after_days: Some(30),
         }
@@ -191,9 +188,12 @@ pub struct SessionManager {
     filesystem: Arc<CortexFilesystem>,
     message_storage: MessageStorage,
     participant_manager: ParticipantManager,
+    #[allow(dead_code)]
     config: SessionConfig,
     llm_client: Option<Arc<dyn LLMClient>>,
     event_bus: Option<EventBus>,
+    /// Optional event sender for v2.5 incremental update system
+    memory_event_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::memory_events::MemoryEvent>>,
 }
 
 impl SessionManager {
@@ -209,6 +209,7 @@ impl SessionManager {
             config,
             llm_client: None,
             event_bus: None,
+            memory_event_tx: None,
         }
     }
 
@@ -228,6 +229,7 @@ impl SessionManager {
             config,
             llm_client: Some(llm_client),
             event_bus: None,
+            memory_event_tx: None,
         }
     }
 
@@ -247,6 +249,7 @@ impl SessionManager {
             config,
             llm_client: None,
             event_bus: Some(event_bus),
+            memory_event_tx: None,
         }
     }
 
@@ -267,7 +270,14 @@ impl SessionManager {
             config,
             llm_client: Some(llm_client),
             event_bus: Some(event_bus),
+            memory_event_tx: None,
         }
+    }
+    
+    /// Set the memory event sender for v2.5 incremental update system
+    pub fn with_memory_event_tx(mut self, tx: tokio::sync::mpsc::UnboundedSender<crate::memory_events::MemoryEvent>) -> Self {
+        self.memory_event_tx = Some(tx);
+        self
     }
 
     /// 获取 LLM client（如果存在）
@@ -300,11 +310,6 @@ impl SessionManager {
         Ok(metadata)
     }
 
-    /// Create a new session (deprecated - use create_session_with_ids)
-    pub async fn create_session(&self, thread_id: &str) -> Result<SessionMetadata> {
-        self.create_session_with_ids(thread_id, None, None).await
-    }
-
     /// Load session metadata
     pub async fn load_session(&self, thread_id: &str) -> Result<SessionMetadata> {
         let metadata_uri = format!("cortex://session/{}/.session.json", thread_id);
@@ -322,75 +327,27 @@ impl SessionManager {
     }
 
     /// Close a session
+    /// 
+    /// IMPORTANT: Layer generation is now fully asynchronous via MemoryEventCoordinator.
+    /// This method no longer generates layers synchronously to avoid blocking.
+    /// The SessionClosed event will trigger:
+    /// 1. Memory extraction
+    /// 2. Timeline layer generation (L0/L1)
+    /// 3. Vector sync
     pub async fn close_session(&mut self, thread_id: &str) -> Result<SessionMetadata> {
         let mut metadata = self.load_session(thread_id).await?;
         metadata.close();
         self.update_session(&metadata).await?;
 
-        // Generate timeline layers (L0/L1) for the entire session
-        if let Some(ref llm_client) = self.llm_client {
-            use crate::layers::manager::LayerManager;
-
-            let timeline_uri = format!("cortex://session/{}/timeline", thread_id);
-            let layer_manager = LayerManager::new(self.filesystem.clone(), llm_client.clone());
-
-            info!(
-                "Generating session-level timeline layers for: {}",
-                thread_id
-            );
-            match layer_manager.generate_timeline_layers(&timeline_uri).await {
-                Ok(_) => {
-                    info!(
-                        "✅ Successfully generated timeline layers for session: {}",
-                        thread_id
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to generate timeline layers for session {}: {}",
-                        thread_id, e
-                    );
-                }
-            }
-        }
-
-        // Trigger memory extraction if auto_extract_on_close is enabled and LLM client is available
-        if self.config.auto_extract_on_close {
-            if let Some(ref llm_client) = self.llm_client {
-                info!("Auto-extracting memories for session: {}", thread_id);
-
-                match self
-                    .extract_and_save_memories(thread_id, llm_client.clone())
-                    .await
-                {
-                    Ok(stats) => {
-                        info!(
-                            "Memory extraction completed for session {}: {} preferences, {} entities, {} events, {} cases, {} personal_info, {} work_history, {} relationships, {} goals",
-                            thread_id,
-                            stats.preferences,
-                            stats.entities,
-                            stats.events,
-                            stats.cases,
-                            stats.personal_info,
-                            stats.work_history,
-                            stats.relationships,
-                            stats.goals
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to extract memories for session {}: {}",
-                            thread_id, e
-                        );
-                    }
-                }
-            } else {
-                warn!(
-                    "Memory extraction skipped for session {}: LLM client not configured",
-                    thread_id
-                );
-            }
-        }
+        // 🚫 REMOVED: Synchronous layer generation
+        // Layer generation is now handled asynchronously by MemoryEventCoordinator
+        // This prevents blocking and avoids duplicate LLM calls
+        //
+        // Old code that was removed:
+        // if let Some(ref llm_client) = self.llm_client {
+        //     let layer_manager = LayerManager::new(...);
+        //     layer_manager.generate_timeline_layers(&timeline_uri).await?;
+        // }
 
         // 发布会话关闭事件
         if let Some(ref bus) = self.event_bus {
@@ -398,67 +355,35 @@ impl SessionManager {
                 session_id: thread_id.to_string(),
             }));
         }
-
-        Ok(metadata)
-    }
-
-    /// Extract and save memories from a session
-    async fn extract_and_save_memories(
-        &self,
-        thread_id: &str,
-        llm_client: Arc<dyn LLMClient>,
-    ) -> Result<ExtractionStats> {
-        // Get all message URIs from the session timeline
-        let message_uris = self.message_storage.list_messages(thread_id).await?;
-
-        if message_uris.is_empty() {
+        
+        // v2.5: 发送记忆事件给协调器处理（异步）
+        // MemoryEventCoordinator will handle:
+        // 1. Memory extraction from session
+        // 2. Timeline layer generation
+        // 3. Vector sync
+        if let Some(ref tx) = self.memory_event_tx {
+            let user_id = metadata.user_id.clone().unwrap_or_else(|| "default".to_string());
+            let agent_id = metadata.agent_id.clone().unwrap_or_else(|| "default".to_string());
+            
+            let _ = tx.send(crate::memory_events::MemoryEvent::SessionClosed {
+                session_id: thread_id.to_string(),
+                user_id: user_id.clone(),
+                agent_id: agent_id.clone(),
+            });
+            
             info!(
-                "No messages found in session {}, skipping extraction",
+                "Session {} closed, SessionClosed event sent for async processing (user_id={}, agent_id={})",
+                thread_id, user_id, agent_id
+            );
+        } else {
+            // 使用 log 以便在 tars 中可见
+            log::warn!(
+                "⚠️ memory_event_tx is None, SessionClosed event NOT sent for session {}",
                 thread_id
             );
-            return Ok(ExtractionStats::default());
         }
 
-        // 🔧 读取session metadata获取user_id和agent_id
-        let metadata = self.load_session(thread_id).await?;
-        let user_id = metadata
-            .user_id
-            .clone()
-            .unwrap_or_else(|| "default".to_string());
-        let agent_id = metadata
-            .agent_id
-            .clone()
-            .unwrap_or_else(|| "default".to_string());
-
-        // Read message contents
-        let mut messages = Vec::new();
-        for uri in &message_uris {
-            match self.filesystem.read(uri).await {
-                Ok(content) => messages.push(content),
-                Err(e) => warn!("Failed to read message {}: {}", uri, e),
-            }
-        }
-
-        // Extract memories using LLM
-        let extractor =
-            MemoryExtractor::new(llm_client, self.filesystem.clone(), user_id, agent_id);
-        let extracted = extractor.extract(&messages).await?;
-
-        let stats = ExtractionStats {
-            preferences: extracted.preferences.len(),
-            entities: extracted.entities.len(),
-            events: extracted.events.len(),
-            cases: extracted.cases.len(),
-            personal_info: extracted.personal_info.len(),
-            work_history: extracted.work_history.len(),
-            relationships: extracted.relationships.len(),
-            goals: extracted.goals.len(),
-        };
-
-        // Save extracted memories
-        extractor.save_memories(&extracted).await?;
-
-        Ok(stats)
+        Ok(metadata)
     }
 
     /// Archive a session

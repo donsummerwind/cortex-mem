@@ -141,12 +141,20 @@ impl LLMClientImpl {
     pub async fn complete(&self, prompt: &str) -> Result<String> {
         use rig::completion::Prompt;
         
+        tracing::info!("🔄 LLM 调用开始 [模型: {}]", self.config.model_efficient);
+        tracing::debug!("📝 Prompt 长度: {} 字符", prompt.len());
+        
+        let start = std::time::Instant::now();
+        
         let agent = self.create_agent("You are a helpful assistant.").await?;
         let response = agent
             .prompt(prompt)
             .await
             .map_err(|e| crate::Error::Llm(format!("LLM completion failed: {}", e)))?;
 
+        let elapsed = start.elapsed();
+        tracing::info!("✅ LLM 调用完成 [耗时: {:.2}s, 响应: {} 字符]", elapsed.as_secs_f64(), response.len());
+        
         Ok(response)
     }
 
@@ -154,12 +162,21 @@ impl LLMClientImpl {
     pub async fn complete_with_system(&self, system: &str, prompt: &str) -> Result<String> {
         use rig::completion::Prompt;
         
+        tracing::info!("🔄 LLM 调用开始 (with system) [模型: {}]", self.config.model_efficient);
+        tracing::debug!("📝 System: {}..., Prompt 长度: {} 字符", 
+            &system.chars().take(50).collect::<String>(), prompt.len());
+        
+        let start = std::time::Instant::now();
+        
         let agent = self.create_agent(system).await?;
         let response = agent
             .prompt(prompt)
             .await
             .map_err(|e| crate::Error::Llm(format!("LLM completion failed: {}", e)))?;
             
+        let elapsed = start.elapsed();
+        tracing::info!("✅ LLM 调用完成 [耗时: {:.2}s, 响应: {} 字符]", elapsed.as_secs_f64(), response.len());
+        
         Ok(response)
     }
 
@@ -270,11 +287,19 @@ impl LLMClient for LLMClientImpl {
     async fn complete(&self, prompt: &str) -> Result<String> {
         use rig::completion::Prompt;
         
+        tracing::info!("🔄 LLM 调用开始 [模型: {}]", self.config.model_efficient);
+        tracing::debug!("📝 Prompt 长度: {} 字符", prompt.len());
+        
+        let start = std::time::Instant::now();
+        
         let agent = self.create_agent("You are a helpful assistant.").await?;
         let response = agent
             .prompt(prompt)
             .await
             .map_err(|e| crate::Error::Llm(format!("LLM completion failed: {}", e)))?;
+
+        let elapsed = start.elapsed();
+        tracing::info!("✅ LLM 调用完成 [耗时: {:.2}s, 响应: {} 字符]", elapsed.as_secs_f64(), response.len());
 
         Ok(response)
     }
@@ -282,11 +307,20 @@ impl LLMClient for LLMClientImpl {
     async fn complete_with_system(&self, system: &str, prompt: &str) -> Result<String> {
         use rig::completion::Prompt;
         
+        tracing::info!("🔄 LLM 调用开始 (with system) [模型: {}]", self.config.model_efficient);
+        tracing::debug!("📝 System: {}..., Prompt 长度: {} 字符", 
+            &system.chars().take(50).collect::<String>(), prompt.len());
+        
+        let start = std::time::Instant::now();
+        
         let agent = self.create_agent(system).await?;
         let response = agent
             .prompt(prompt)
             .await
             .map_err(|e| crate::Error::Llm(format!("LLM completion failed: {}", e)))?;
+            
+        let elapsed = start.elapsed();
+        tracing::info!("✅ LLM 调用完成 [耗时: {:.2}s, 响应: {} 字符]", elapsed.as_secs_f64(), response.len());
             
         Ok(response)
     }

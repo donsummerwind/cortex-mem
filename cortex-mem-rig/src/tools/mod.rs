@@ -1,9 +1,9 @@
-// Rig Tool Implementations - OpenViking Style
+// Rig Tool Implementations
 
 use cortex_mem_tools::{
-    MemoryOperations, SearchArgs, FindArgs, LsArgs, ExploreArgs, StoreArgs,
-    AbstractResponse, OverviewResponse, ReadResponse, SearchResponse, FindResponse,
-    LsResponse, ExploreResponse, StoreResponse, ToolsError,
+    AbstractResponse, ExploreArgs, ExploreResponse, FindArgs, FindResponse, LsArgs, LsResponse,
+    MemoryOperations, OverviewResponse, ReadResponse, SearchArgs, SearchResponse, StoreArgs,
+    StoreResponse, ToolsError,
 };
 use rig::{completion::ToolDefinition, tool::Tool};
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,8 @@ impl Tool for AbstractTool {
         async {
             ToolDefinition {
                 name: Self::NAME.to_string(),
-                description: "获取内容的 L0 抽象摘要（~100 tokens），用于快速判断相关性".to_string(),
+                description: "获取内容的 L0 抽象摘要（~100 tokens），用于快速判断相关性"
+                    .to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
@@ -92,7 +93,8 @@ impl Tool for OverviewTool {
         async {
             ToolDefinition {
                 name: Self::NAME.to_string(),
-                description: "获取内容的 L1 概览（~2000 tokens），包含核心信息和使用场景".to_string(),
+                description: "获取内容的 L1 概览（~2000 tokens），包含核心信息和使用场景"
+                    .to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {

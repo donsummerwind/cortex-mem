@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Operation result wrapper
@@ -31,14 +31,12 @@ impl<T> OperationResult<T> {
     }
 }
 
-// ==================== OpenViking Style Types ====================
-
 /// L0 Abstract response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AbstractResponse {
     pub uri: String,
     pub abstract_text: String,
-    pub layer: String,  // "L0"
+    pub layer: String, // "L0"
     pub token_count: usize,
 }
 
@@ -47,7 +45,7 @@ pub struct AbstractResponse {
 pub struct OverviewResponse {
     pub uri: String,
     pub overview_text: String,
-    pub layer: String,  // "L1"
+    pub layer: String, // "L1"
     pub token_count: usize,
 }
 
@@ -56,7 +54,7 @@ pub struct OverviewResponse {
 pub struct ReadResponse {
     pub uri: String,
     pub content: String,
-    pub layer: String,  // "L2"
+    pub layer: String, // "L2"
     pub token_count: usize,
     pub metadata: Option<FileMetadata>,
 }
@@ -71,9 +69,9 @@ pub struct FileMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchArgs {
     pub query: String,
-    pub recursive: Option<bool>,        // 是否递归搜索
-    pub return_layers: Option<Vec<String>>,  // ["L0", "L1", "L2"]
-    pub scope: Option<String>,          // 搜索范围 URI
+    pub recursive: Option<bool>,            // 是否递归搜索
+    pub return_layers: Option<Vec<String>>, // ["L0", "L1", "L2"]
+    pub scope: Option<String>,              // 搜索范围 URI
     pub limit: Option<usize>,
 }
 
@@ -82,9 +80,9 @@ pub struct SearchArgs {
 pub struct SearchResult {
     pub uri: String,
     pub score: f32,
-    pub abstract_text: Option<String>,  // L0
-    pub overview_text: Option<String>,  // L1
-    pub content: Option<String>,        // L2
+    pub abstract_text: Option<String>, // L0
+    pub overview_text: Option<String>, // L1
+    pub content: Option<String>,       // L2
 }
 
 /// Search response

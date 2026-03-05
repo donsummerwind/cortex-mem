@@ -17,7 +17,7 @@ Located within `cortex-mem-core`, this domain serves as a critical optimization 
 
 ### 2.1 Three-Tier Memory Hierarchy
 
-The domain implements the **TARS/OpenViking memory organization specification**, partitioning memory into three distinct semantic layers:
+The domain implements the **TARS memory organization specification**, partitioning memory into three distinct semantic layers:
 
 | Layer | File Suffix | Content Type | Semantic Purpose | Search Weight |
 |-------|-------------|--------------|------------------|---------------|

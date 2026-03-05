@@ -44,8 +44,6 @@ pub struct App {
     message_receiver: mpsc::UnboundedReceiver<AppMessage>,
     pub current_bot_id: Arc<std::sync::RwLock<Option<String>>>,
     previous_state: Option<crate::ui::AppState>,
-    external_message_sender: mpsc::UnboundedSender<String>,
-    external_message_receiver: mpsc::UnboundedReceiver<String>,
 
     // 🎙️ 音频输入相关
     audio_input_enabled: bool, // 是否启用语音输入
@@ -87,7 +85,6 @@ impl App {
 
         // 创建消息通道
         let (msg_tx, msg_rx) = mpsc::unbounded_channel::<AppMessage>();
-        let (external_msg_tx, external_msg_rx) = mpsc::unbounded_channel::<String>();
 
         log::info!("应用程序初始化完成");
 
@@ -110,8 +107,6 @@ impl App {
             message_receiver: msg_rx,
             current_bot_id: Arc::new(std::sync::RwLock::new(None)),
             previous_state: Some(initial_state),
-            external_message_sender: external_msg_tx,
-            external_message_receiver: external_msg_rx,
 
             // 🎙️ 音频输入初始化
             audio_input_enabled: false,
@@ -146,7 +141,7 @@ impl App {
                         log::debug!("服务可用，状态码: {}", response.status());
                         self.ui.service_status = crate::ui::ServiceStatus::Active;
                     } else {
-                        log::warn!("服务不可用，状态码: {}", response.status());
+                        log::debug!("服务不可用，状态码: {}", response.status());
                         self.ui.service_status = crate::ui::ServiceStatus::Inactive;
                     }
                 }
@@ -238,33 +233,31 @@ impl App {
                         // 流式完成，确保完整响应已保存
                         if let Some(last_msg) = self.ui.messages.last_mut() {
                             if last_msg.role == crate::agent::MessageRole::Assistant {
-                                last_msg.content = full_response;
+                                last_msg.content = full_response.clone();
                                 // 只清除当前正在更新的消息的缓存
                                 let last_idx = self.ui.messages.len() - 1;
                                 self.ui.invalidate_render_cache(Some(last_idx));
                             } else {
-                                self.ui.messages.push(ChatMessage::assistant(full_response));
+                                self.ui.messages.push(ChatMessage::assistant(full_response.clone()));
                                 self.ui.invalidate_render_cache(None);
                             }
                         } else {
-                            self.ui.messages.push(ChatMessage::assistant(full_response));
+                            self.ui.messages.push(ChatMessage::assistant(full_response.clone()));
                             self.ui.invalidate_render_cache(None);
                         }
+                        
+                        // 🔧 更新 agent_handler 的历史记录，确保下一轮对话能获取完整上下文
+                        if let Some(ref mut handler) = self.agent_handler {
+                            handler.add_assistant_response(full_response);
+                            log::debug!("✅ 已将助手响应添加到对话历史");
+                        }
+                        
                         // 确保自动滚动启用
                         self.ui.auto_scroll = true;
                     }
                     AppMessage::Log(_) => {
                         // 日志消息暂时忽略
                     }
-                }
-            }
-
-            // 处理外部消息（来自 API 的 chat 模式）
-            if let Ok(external_msg) = self.external_message_receiver.try_recv() {
-                log::info!("收到外部消息: {}", external_msg);
-                // 调用 handle_external_message 处理外部消息
-                if let Err(e) = self.handle_external_message(external_msg).await {
-                    log::error!("处理外部消息失败: {}", e);
                 }
             }
 
@@ -550,19 +543,22 @@ impl App {
                             self.tenant_operations = Some(tenant_ops.clone());
 
                             // 从租户 operations 提取用户基本信息
-                            let user_info =
-                                match extract_user_basic_info(tenant_ops, &self.user_id, &bot.id)
-                                    .await
-                                {
-                                    Ok(info) => {
-                                        self.user_info = info.clone();
-                                        info
-                                    }
-                                    Err(e) => {
-                                        log::error!("提取用户基本信息失败: {}", e);
-                                        None
-                                    }
-                                };
+                            let user_info = match extract_user_basic_info(
+                                tenant_ops.clone(),
+                                &self.user_id,
+                                &bot.id,
+                            )
+                            .await
+                            {
+                                Ok(info) => {
+                                    self.user_info = info.clone();
+                                    info
+                                }
+                                Err(e) => {
+                                    log::error!("提取用户基本信息失败: {}", e);
+                                    None
+                                }
+                            };
 
                             // 如果有用户信息，需要重新创建 Agent（带用户信息）
                             if user_info.is_some() {
@@ -589,6 +585,23 @@ impl App {
                             } else {
                                 self.rig_agent = Some(rig_agent);
                                 log::info!("已创建带记忆功能的真实 Agent");
+                            }
+
+                            // 🔧 创建rig_agent后立即初始化agent_handler
+                            if let Some(rig_agent) = &self.rig_agent {
+                                let session_id = self
+                                    .current_session_id
+                                    .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
+                                    .clone();
+                                self.agent_handler = Some(AgentChatHandler::with_memory(
+                                    rig_agent.clone(),
+                                    tenant_ops.clone(),
+                                    session_id,
+                                ));
+                                log::info!(
+                                    "✅ 已初始化 agent_handler with session_id: {}",
+                                    self.current_session_id.as_ref().unwrap()
+                                );
                             }
                         }
                         Err(e) => {
@@ -617,73 +630,31 @@ impl App {
         log::debug!("当前消息总数: {}", self.ui.messages.len());
 
         // 使用真实的带记忆的 Agent 或 Mock Agent
-        if let Some(rig_agent) = &self.rig_agent {
-            // 使用真实 Agent 进行流式响应
-            // 构建历史对话（排除当前用户输入）
-            let _current_conversations: Vec<(String, String)> = {
-                let mut conversations = Vec::new();
-                let mut last_user_msg: Option<String> = None;
-
-                // 遍历所有消息，但排除最后一条（当前用户输入）
-                let messages_to_include = if self.ui.messages.len() > 1 {
-                    &self.ui.messages[..self.ui.messages.len() - 1]
-                } else {
-                    &[]
-                };
-
-                for msg in messages_to_include {
-                    match msg.role {
-                        crate::agent::MessageRole::User => {
-                            // 如果有未配对的 User 消息，先保存它（单独的 User 消息）
-                            if let Some(user_msg) = last_user_msg.take() {
-                                conversations.push((user_msg, String::new()));
-                            }
-                            last_user_msg = Some(msg.content.clone());
-                        }
-                        crate::agent::MessageRole::Assistant => {
-                            // 将 Assistant 消息与最近的 User 消息配对
-                            if let Some(user_msg) = last_user_msg.take() {
-                                conversations.push((user_msg, msg.content.clone()));
-                            }
-                        }
-                        crate::agent::MessageRole::System => {
-                            // 系统消息不参与对话配对
-                        }
-                    }
-                }
-
-                // 如果最后一个消息是 User 消息，也加入对话历史
-                if let Some(user_msg) = last_user_msg {
-                    conversations.push((user_msg, String::new()));
-                }
-
-                conversations
-            };
-
-            let _infrastructure_clone = self.infrastructure.clone();
-
-            // 创建 AgentChatHandler 并传入租户 memory operations 用于自动存储
-            let mut agent_handler = if let Some(tenant_ops) = &self.tenant_operations {
-                // 每次启动创建新的 session_id（如果还没有）
-                let session_id = self
-                    .current_session_id
-                    .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
-                    .clone();
-                AgentChatHandler::with_memory(rig_agent.clone(), tenant_ops.clone(), session_id)
-            } else {
-                AgentChatHandler::new(rig_agent.clone())
-            };
+        if let Some(_rig_agent) = &self.rig_agent {
+            // 🔧 使用App持久化的agent_handler而不是每次创建新的
+            if self.agent_handler.is_none() {
+                log::error!("Agent handler 未初始化,请先初始化");
+                return Ok(());
+            }
 
             let msg_tx = self.message_sender.clone();
             let user_input = input_text.to_string();
             let user_input_for_stream = user_input.clone();
 
-            tokio::spawn(async move {
-                match agent_handler.chat_stream(&user_input).await {
-                    Ok(mut rx) => {
+            // 🔧 获取agent_handler的引用来调用chat_stream
+            let agent_handler = self
+                .agent_handler
+                .as_mut()
+                .expect("Agent handler should exist");
+
+            // 🔧 chat_stream 返回 (stream_rx, completion_rx)
+            match agent_handler.chat_stream(&user_input).await {
+                Ok((mut stream_rx, mut completion_rx)) => {
+                    // 在主线程中spawn接收流式响应的任务
+                    tokio::spawn(async move {
                         let mut full_response = String::new();
 
-                        while let Some(chunk) = rx.recv().await {
+                        while let Some(chunk) = stream_rx.recv().await {
                             full_response.push_str(&chunk);
                             if let Err(_) = msg_tx.send(AppMessage::StreamingChunk {
                                 user: user_input_for_stream.clone(),
@@ -693,16 +664,26 @@ impl App {
                             }
                         }
 
+                        // 🔧 从 completion_rx 获取完整响应（确保一致性）
+                        if let Ok(response) = completion_rx.try_recv() {
+                            full_response = response;
+                        }
+
                         let _ = msg_tx.send(AppMessage::StreamingComplete {
                             user: user_input_for_stream.clone(),
                             full_response,
                         });
-                    }
-                    Err(e) => {
-                        log::error!("生成回复失败: {}", e);
-                    }
+                    });
                 }
-            });
+                Err(e) => {
+                    log::error!("生成回复失败: {}", e);
+                    let error_msg = format!("生成回复失败: {}", e);
+                    let _ = msg_tx.send(AppMessage::StreamingChunk {
+                        user: user_input_for_stream.clone(),
+                        chunk: error_msg,
+                    });
+                }
+            }
         }
 
         if self.infrastructure.is_none() {
@@ -755,205 +736,6 @@ impl App {
             }
         }
         self.ui.auto_scroll = true;
-    }
-
-    /// 处理来自 API 的外部消息（模拟用户输入）
-    pub async fn handle_external_message(&mut self, content: String) -> Result<()> {
-        log::info!("收到外部消息: {}", content);
-
-        // 检查是否选择了机器人
-        if self.current_bot.is_none() {
-            if let Some(bot) = self.ui.selected_bot() {
-                self.current_bot = Some(bot.clone());
-
-                // 更新 current_bot_id
-                if let Ok(mut bot_id) = self.current_bot_id.write() {
-                    *bot_id = Some(bot.id.clone());
-                    log::info!("已更新当前机器人 ID: {}", bot.id);
-                }
-
-                // 如果有基础设施，创建真实的带记忆的 Agent
-                if let Some(infrastructure) = &self.infrastructure {
-                    let config = infrastructure.config();
-                    // 🔧 先创建tenant_ops（带租户隔离和user_id）
-                    match create_memory_agent(
-                        config.cortex.data_dir(),
-                        config,
-                        None, // user_info稍后提取
-                        Some(bot.system_prompt.as_str()),
-                        &bot.id,
-                        &self.user_id,
-                    )
-                    .await
-                    {
-                        Ok((rig_agent, tenant_ops)) => {
-                            // 保存租户 operations
-                            self.tenant_operations = Some(tenant_ops.clone());
-
-                            // 🔧 使用租户隔离的operations提取用户信息（而非global operations）
-                            let user_info = match extract_user_basic_info(
-                                tenant_ops.clone(),
-                                &self.user_id,
-                                &bot.id,
-                            )
-                            .await
-                            {
-                                Ok(info) => {
-                                    self.user_info = info.clone();
-                                    info
-                                }
-                                Err(e) => {
-                                    log::error!("提取用户基本信息失败: {}", e);
-                                    None
-                                }
-                            };
-
-                            // 如果有用户信息，需要重新创建 Agent（带用户信息）
-                            if user_info.is_some() {
-                                let config = infrastructure.config();
-                                match create_memory_agent(
-                                    config.cortex.data_dir(),
-                                    config,
-                                    user_info.as_deref(),
-                                    Some(bot.system_prompt.as_str()),
-                                    &bot.id,
-                                    &self.user_id,
-                                )
-                                .await
-                                {
-                                    Ok((rig_agent_with_info, tenant_ops_with_info)) => {
-                                        self.tenant_operations = Some(tenant_ops_with_info);
-                                        self.rig_agent = Some(rig_agent_with_info);
-                                        log::info!("已创建带用户信息的 Agent");
-                                    }
-                                    Err(e) => {
-                                        log::error!("重新创建带用户信息的 Agent 失败: {}", e);
-                                        // 保持之前创建的Agent
-                                        self.rig_agent = Some(rig_agent);
-                                    }
-                                }
-                            } else {
-                                // 没有用户信息，使用首次创建的Agent
-                                self.rig_agent = Some(rig_agent);
-                                log::info!("已创建不带用户信息的 Agent");
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("创建真实 Agent 失败 {}", e);
-                        }
-                    }
-                }
-
-                log::info!("选择机器人: {}", bot.name);
-            } else {
-                log::warn!("没有选中的机器人");
-                return Ok(());
-            }
-        }
-
-        // 添加用户消息到 UI
-        let user_message = ChatMessage::user(content.clone());
-        self.ui.messages.push(user_message.clone());
-        self.ui.invalidate_render_cache(None);
-
-        // 用户发送新消息，重新启用自动滚动
-        self.ui.auto_scroll = true;
-
-        log::info!("外部消息已添加到对话: {}", content);
-        log::debug!("当前消息总数: {}", self.ui.messages.len());
-
-        // 使用真实的带记忆的 Agent 进行流式响应
-        if let Some(rig_agent) = &self.rig_agent {
-            // 构建历史对话（排除当前用户输入）
-            let _current_conversations: Vec<(String, String)> = {
-                let mut conversations = Vec::new();
-                let mut last_user_msg: Option<String> = None;
-
-                // 遍历所有消息，但排除最后一条（当前用户输入）
-                let messages_to_include = if self.ui.messages.len() > 1 {
-                    &self.ui.messages[..self.ui.messages.len() - 1]
-                } else {
-                    &[]
-                };
-
-                for msg in messages_to_include {
-                    match msg.role {
-                        crate::agent::MessageRole::User => {
-                            // 如果有未配对的 User 消息，先保存它（单独的 User 消息）
-                            if let Some(user_msg) = last_user_msg.take() {
-                                conversations.push((user_msg, String::new()));
-                            }
-                            last_user_msg = Some(msg.content.clone());
-                        }
-                        crate::agent::MessageRole::Assistant => {
-                            // 将 Assistant 消息与最近的 User 消息配对
-                            if let Some(user_msg) = last_user_msg.take() {
-                                conversations.push((user_msg, msg.content.clone()));
-                            }
-                        }
-                        crate::agent::MessageRole::System => {
-                            // 系统消息不参与对话配对
-                        }
-                    }
-                }
-
-                // 如果最后一个消息是 User 消息，也加入对话历史
-                if let Some(user_msg) = last_user_msg {
-                    conversations.push((user_msg, String::new()));
-                }
-
-                conversations
-            };
-
-            // 创建 AgentChatHandler 并传入租户 memory operations 用于自动存储
-            let mut agent_handler = if let Some(tenant_ops) = &self.tenant_operations {
-                // 🔧 使用或创建 session_id（保持一致）
-                let session_id = self
-                    .current_session_id
-                    .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
-                    .clone();
-                AgentChatHandler::with_memory(rig_agent.clone(), tenant_ops.clone(), session_id)
-            } else {
-                AgentChatHandler::new(rig_agent.clone())
-            };
-
-            let msg_tx = self.message_sender.clone();
-            let user_input = content.clone();
-            let user_input_for_stream = user_input.clone();
-
-            tokio::spawn(async move {
-                match agent_handler.chat_stream(&user_input).await {
-                    Ok(mut rx) => {
-                        let mut full_response = String::new();
-
-                        while let Some(chunk) = rx.recv().await {
-                            full_response.push_str(&chunk);
-                            if let Err(_) = msg_tx.send(AppMessage::StreamingChunk {
-                                user: user_input_for_stream.clone(),
-                                chunk,
-                            }) {
-                                break;
-                            }
-                        }
-
-                        let _ = msg_tx.send(AppMessage::StreamingComplete {
-                            user: user_input_for_stream.clone(),
-                            full_response,
-                        });
-                    }
-                    Err(e) => {
-                        log::error!("生成回复失败: {}", e);
-                    }
-                }
-            });
-        } else {
-            log::warn!("Agent 未初始化");
-        }
-
-        // 滚动到底部 - 将在渲染时自动计算
-        self.ui.auto_scroll = true;
-
-        Ok(())
     }
 
     /// 保存机器人（创建或更新）
@@ -1058,6 +840,30 @@ impl App {
             log::info!("✅ 已更新当前机器人 ID: {}", bot.id);
         } else {
             log::error!("❌ 无法更新 current_bot_id");
+        }
+
+        // 🔧 初始化agent_handler
+        if let Some(rig_agent) = &self.rig_agent {
+            if let Some(tenant_ops) = &self.tenant_operations {
+                let session_id = self
+                    .current_session_id
+                    .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
+                    .clone();
+                self.agent_handler = Some(AgentChatHandler::with_memory(
+                    rig_agent.clone(),
+                    tenant_ops.clone(),
+                    session_id,
+                ));
+                log::info!(
+                    "✅ 已初始化 agent_handler with session_id: {}",
+                    self.current_session_id.as_ref().unwrap()
+                );
+            } else {
+                self.agent_handler = Some(AgentChatHandler::new(rig_agent.clone()));
+                log::info!("✅ 已初始化 agent_handler (无记忆)");
+            }
+        } else {
+            log::warn!("⚠️  rig_agent 未初始化，无法创建 agent_handler");
         }
     }
 
@@ -1220,31 +1026,27 @@ impl App {
         self.ui.messages.push(ChatMessage::user(text.clone()));
 
         // 3. 触发 AI 回复
-        if let Some(rig_agent) = &self.rig_agent {
-            let mut agent_handler = if let Some(tenant_ops) = &self.tenant_operations {
-                let session_id = self
-                    .current_session_id
-                    .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
-                    .clone();
-                AgentChatHandler::with_memory(rig_agent.clone(), tenant_ops.clone(), session_id)
-            } else {
-                AgentChatHandler::new(rig_agent.clone())
-            };
-
+        // 🔧 复用已有的 agent_handler，保持对话历史上下文
+        if let Some(ref mut agent_handler) = self.agent_handler {
             let msg_sender = self.message_sender.clone();
             let text_clone = text.clone();
 
             match agent_handler.chat_stream(&text).await {
-                Ok(mut rx) => {
+                Ok((mut stream_rx, mut completion_rx)) => {
                     tokio::spawn(async move {
                         let mut full_response = String::new();
 
-                        while let Some(chunk) = rx.recv().await {
+                        while let Some(chunk) = stream_rx.recv().await {
                             full_response.push_str(&chunk);
                             let _ = msg_sender.send(AppMessage::StreamingChunk {
                                 user: text_clone.clone(),
                                 chunk,
                             });
+                        }
+
+                        // 从 completion_rx 获取完整响应
+                        if let Ok(response) = completion_rx.try_recv() {
+                            full_response = response;
                         }
 
                         let _ = msg_sender.send(AppMessage::StreamingComplete {
@@ -1261,10 +1063,9 @@ impl App {
                 }
             }
         } else {
-            // 这种情况理论上不应该发生，因为在enable_audio_input时已经检查并初始化了
-            log::error!("⚠️ Agent未初始化但通过了enable_audio_input检查");
+            log::error!("⚠️ agent_handler 未初始化");
             self.ui.messages.push(ChatMessage::system(
-                "⚠️ 内部错误：Agent状态异常，请重新启用语音输入",
+                "⚠️ 内部错误：Agent状态异常，请重新选择机器人",
             ));
         }
 
@@ -1296,15 +1097,28 @@ impl App {
                 .await
             {
                 Ok(_) => {
-                    log::info!("✅ 会话已关闭，timeline层和记忆已提取");
+                    log::info!("✅ 会话已关闭，SessionClosed 事件已发送");
                 }
                 Err(e) => {
                     log::warn!("⚠️ 会话关闭失败: {}", e);
                 }
             }
 
+            // 🔧 v2.5: 刷新并等待所有后台任务完成
+            // 这会：
+            // 1. 等待事件处理完成（包括记忆提取）
+            // 2. 刷新 debouncer 中的待处理层级更新
+            // 3. 再次等待确保所有更新完成
+            // 使用真正的事件通知机制，不使用固定超时
+            log::info!("⏳ 刷新并等待所有后台任务完成...");
+            let completed = tenant_ops.flush_and_wait(Some(1)).await;
+            if !completed {
+                log::warn!("⚠️ flush_and_wait 返回 false，可能有任务未完成");
+            }
+
             // 退出时生成所有缺失的 L0/L1 层级文件
-            log::info!("📑 开始生成缺失的 L0/L1 层级文件...");
+            // ensure_all_layers 已经会扫描所有维度
+            log::info!("📑 开始生成所有缺失的 L0/L1 层级文件...");
             match tenant_ops.ensure_all_layers().await {
                 Ok(stats) => {
                     log::info!(
@@ -1320,9 +1134,11 @@ impl App {
             }
 
             // 退出时索引所有文件到向量数据库
+            // 🔧 添加超时保护，避免因 Qdrant 或 Embedding 服务不可用而卡住
             log::info!("📊 开始索引所有文件到向量数据库...");
-            match tenant_ops.index_all_files().await {
-                Ok(stats) => {
+            let index_timeout = tokio::time::Duration::from_secs(120);
+            match tokio::time::timeout(index_timeout, tenant_ops.index_all_files()).await {
+                Ok(Ok(stats)) => {
                     log::info!(
                         "✅ 索引完成: 总计 {} 个文件, {} 个已索引, {} 个跳过",
                         stats.total_files,
@@ -1330,8 +1146,11 @@ impl App {
                         stats.skipped_files
                     );
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     log::warn!("⚠️ 索引失败: {}", e);
+                }
+                Err(_) => {
+                    log::warn!("⚠️ 索引超时（120秒），跳过索引以完成退出");
                 }
             }
         } else {

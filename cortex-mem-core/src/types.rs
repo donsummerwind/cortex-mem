@@ -24,18 +24,13 @@ impl Dimension {
             Dimension::Session => "session",
         }
     }
-    
+
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "resources" => Some(Dimension::Resources),
             "user" => Some(Dimension::User),
             "agent" => Some(Dimension::Agent),
             "session" => Some(Dimension::Session),
-            // Legacy support
-            "agents" => Some(Dimension::Agent),
-            "users" => Some(Dimension::User),
-            "threads" => Some(Dimension::Session),
-            "global" => Some(Dimension::Resources),
             _ => None,
         }
     }
@@ -60,7 +55,7 @@ impl ContextLayer {
             ContextLayer::L2Detail => "",
         }
     }
-    
+
     pub fn max_tokens(&self) -> usize {
         match self {
             ContextLayer::L0Abstract => 100,
@@ -89,16 +84,17 @@ pub struct FileMetadata {
     pub is_directory: bool,
 }
 
-/// Memory metadata (for V1 compatibility)
+/// Memory metadata for vector store
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryMetadata {
-    pub uri: Option<String>,  // Original URI for reference
+    pub uri: Option<String>,
     pub user_id: Option<String>,
     pub agent_id: Option<String>,
     pub run_id: Option<String>,
     pub actor_id: Option<String>,
     pub role: Option<String>,
-    pub memory_type: MemoryType,
+    /// Layer: L0, L1, or L2
+    pub layer: String,
     pub hash: String,
     pub importance_score: f32,
     pub entities: Vec<String>,
@@ -106,28 +102,26 @@ pub struct MemoryMetadata {
     pub custom: HashMap<String, serde_json::Value>,
 }
 
-/// Memory type (for V1 compatibility)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MemoryType {
-    Conversational,
-    Procedural,
-    Semantic,
-    Episodic,
-}
-
-impl MemoryType {
-    pub fn parse(s: &str) -> Self {
-        match s {
-            "Conversational" => MemoryType::Conversational,
-            "Procedural" => MemoryType::Procedural,
-            "Semantic" => MemoryType::Semantic,
-            "Episodic" => MemoryType::Episodic,
-            _ => MemoryType::Conversational, // Default fallback
+impl Default for MemoryMetadata {
+    fn default() -> Self {
+        Self {
+            uri: None,
+            user_id: None,
+            agent_id: None,
+            run_id: None,
+            actor_id: None,
+            role: None,
+            layer: "L2".to_string(),
+            hash: String::new(),
+            importance_score: 0.5,
+            entities: Vec::new(),
+            topics: Vec::new(),
+            custom: HashMap::new(),
         }
     }
 }
 
-/// User memory category (OpenViking-aligned)
+/// User memory category
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UserMemoryCategory {
     /// User profile (appendable)
@@ -149,7 +143,7 @@ impl UserMemoryCategory {
             UserMemoryCategory::Events => "events",
         }
     }
-    
+
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "profile" => Some(UserMemoryCategory::Profile),
@@ -161,7 +155,7 @@ impl UserMemoryCategory {
     }
 }
 
-/// Agent memory category (OpenViking-aligned)
+/// Agent memory category
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AgentMemoryCategory {
     /// Problem + solution cases
@@ -180,7 +174,7 @@ impl AgentMemoryCategory {
             AgentMemoryCategory::Instructions => "instructions",
         }
     }
-    
+
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "cases" => Some(AgentMemoryCategory::Cases),
@@ -215,7 +209,8 @@ pub struct Filters {
     pub user_id: Option<String>,
     pub agent_id: Option<String>,
     pub run_id: Option<String>,
-    pub memory_type: Option<MemoryType>,
+    /// Layer filter: L0, L1, or L2
+    pub layer: Option<String>,
     pub created_after: Option<DateTime<Utc>>,
     pub created_before: Option<DateTime<Utc>>,
     pub updated_after: Option<DateTime<Utc>>,
@@ -234,11 +229,12 @@ impl Filters {
     pub fn add_custom(&mut self, key: &str, value: impl Into<serde_json::Value>) {
         self.custom.insert(key.to_string(), value.into());
     }
-    
+
     /// Create filters with a specific layer
     pub fn with_layer(layer: &str) -> Self {
-        let mut filters = Self::default();
-        filters.add_custom("layer", layer);
-        filters
+        Self {
+            layer: Some(layer.to_string()),
+            ..Default::default()
+        }
     }
 }

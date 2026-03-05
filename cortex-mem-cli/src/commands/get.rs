@@ -7,10 +7,20 @@ pub async fn execute(
     operations: Arc<MemoryOperations>,
     uri: &str,
     abstract_only: bool,
+    overview: bool,
 ) -> Result<()> {
     println!("{} Getting memory: {}", "🔍".bold(), uri.cyan());
 
-    if abstract_only {
+    if overview {
+        // Get overview (L1 layer)
+        let overview_result = operations.get_overview(uri).await?;
+        
+        println!("\n{}", "─".repeat(80).dimmed());
+        println!("{} Overview (L1)", "📝".bold());
+        println!("{}\n", "─".repeat(80).dimmed());
+        println!("{}", overview_result.overview_text);
+        println!("{}\n", "─".repeat(80).dimmed());
+    } else if abstract_only {
         // Get abstract (L0 layer)
         let abstract_result = operations.get_abstract(uri).await?;
         

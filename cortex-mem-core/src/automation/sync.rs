@@ -3,7 +3,7 @@ use crate::{
     filesystem::{CortexFilesystem, FilesystemOperations},
     layers::manager::LayerManager,
     llm::LLMClient,
-    types::{Memory, MemoryMetadata, MemoryType},
+    types::{Memory, MemoryMetadata},
     vector_store::{QdrantVectorStore, uri_to_vector_id},
     ContextLayer,
     Result,
@@ -102,7 +102,7 @@ impl SyncManager {
         // 同步用户记忆 (preferences, entities, events)
         if self.config.sync_users {
             let stats = self
-                .sync_directory("cortex://user", MemoryType::Semantic)
+                .sync_directory("cortex://user", "L2")
                 .await?;
             total_stats.add(&stats);
         }
@@ -110,7 +110,7 @@ impl SyncManager {
         // 同步Agent记忆 (cases, skills)
         if self.config.sync_agents {
             let stats = self
-                .sync_directory("cortex://agent", MemoryType::Semantic)
+                .sync_directory("cortex://agent", "L2")
                 .await?;
             total_stats.add(&stats);
         }
@@ -127,7 +127,7 @@ impl SyncManager {
             if let Ok(entries) = self.filesystem.list("cortex://resources").await {
                 if !entries.is_empty() {
                     let stats = self
-                        .sync_directory("cortex://resources", MemoryType::Semantic)
+                        .sync_directory("cortex://resources", "L2")
                         .await?;
                     total_stats.add(&stats);
                 }
@@ -164,9 +164,9 @@ impl SyncManager {
             self.sync_directory_recursive(uri).await?
         } else if uri.starts_with("cortex://user/") || uri.starts_with("cortex://agent/") {
             // user/agent路径使用非递归同步
-            self.sync_directory(uri, MemoryType::Semantic).await?
+            self.sync_directory(uri, "L2").await?
         } else if uri.starts_with("cortex://resources/") {
-            self.sync_directory(uri, MemoryType::Semantic).await?
+            self.sync_directory(uri, "L2").await?
         } else {
             // 其他路径尝试递归同步
             self.sync_directory_recursive(uri).await?
@@ -188,7 +188,7 @@ impl SyncManager {
     fn sync_directory<'a>(
         &'a self,
         uri: &'a str,
-        memory_type: MemoryType,
+        layer: &'a str,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<SyncStats>> + Send + 'a>> {
         Box::pin(async move {
             let entries = self.filesystem.list(uri).await?;
@@ -197,11 +197,11 @@ impl SyncManager {
             for entry in entries {
                 if entry.is_directory {
                     // 递归处理子目录
-                    let sub_stats = self.sync_directory(&entry.uri, memory_type.clone()).await?;
+                    let sub_stats = self.sync_directory(&entry.uri, layer).await?;
                     stats.add(&sub_stats);
                 } else if entry.name.ends_with(".md") {
                     // 处理Markdown文件
-                    match self.sync_file(&entry.uri, memory_type.clone()).await {
+                    match self.sync_file(&entry.uri, layer).await {
                         Ok(true) => stats.indexed_files += 1,
                         Ok(false) => stats.skipped_files += 1,
                         Err(e) => {
@@ -244,7 +244,7 @@ impl SyncManager {
                     stats.add(&sub_stats);
                 } else if entry.name.ends_with(".md") {
                     // 处理Markdown文件
-                    match self.sync_file(&entry.uri, MemoryType::Conversational).await {
+                    match self.sync_file(&entry.uri, "L2").await {
                         Ok(true) => stats.indexed_files += 1,
                         Ok(false) => stats.skipped_files += 1,
                         Err(e) => {
@@ -261,7 +261,7 @@ impl SyncManager {
     }
 
     /// 同步单个文件（支持分层向量索引）
-    async fn sync_file(&self, uri: &str, memory_type: MemoryType) -> Result<bool> {
+    async fn sync_file(&self, uri: &str, layer: &str) -> Result<bool> {
         // 检查是否已经索引（检查L2层）
         let l2_id = uri_to_vector_id(uri, ContextLayer::L2Detail);
         if self.is_indexed(&l2_id).await? {
@@ -272,7 +272,7 @@ impl SyncManager {
         // 1. 读取并索引L2原始内容
         let l2_content = self.filesystem.read(uri).await?;
         let l2_embedding = self.embedding.embed(&l2_content).await?;
-        let l2_metadata = self.parse_metadata(uri, memory_type.clone(), "L2")?;
+        let l2_metadata = self.parse_metadata(uri, layer)?;
 
         let l2_memory = Memory {
             id: l2_id.clone(),
@@ -296,7 +296,7 @@ impl SyncManager {
             if !self.is_indexed(&l0_id).await? {
                 let l0_embedding = self.embedding.embed(&l0_content).await?;
                 // 元数据使用目录 URI
-                let l0_metadata = self.parse_metadata(&dir_uri, memory_type.clone(), "L0")?;
+                let l0_metadata = self.parse_metadata(&dir_uri, "L0")?;
 
                 let l0_memory = Memory {
                     id: l0_id,
@@ -317,7 +317,7 @@ impl SyncManager {
             let l1_id = uri_to_vector_id(&dir_uri, ContextLayer::L1Overview);
             if !self.is_indexed(&l1_id).await? {
                 let l1_embedding = self.embedding.embed(&l1_content).await?;
-                let l1_metadata = self.parse_metadata(&dir_uri, memory_type.clone(), "L1")?;
+                let l1_metadata = self.parse_metadata(&dir_uri, "L1")?;
 
                 let l1_memory = Memory {
                     id: l1_id,
@@ -379,7 +379,6 @@ impl SyncManager {
     fn parse_metadata(
         &self,
         uri: &str,
-        memory_type: MemoryType,
         layer: &str,
     ) -> Result<MemoryMetadata> {
         use serde_json::Value;
@@ -392,7 +391,7 @@ impl SyncManager {
             (parts[2], parts[3..].join("/"))
         } else {
             (
-                "threads",
+                "session",
                 uri.strip_prefix("cortex://").unwrap_or(uri).to_string(),
             )
         };
@@ -402,28 +401,27 @@ impl SyncManager {
         let mut custom = std::collections::HashMap::new();
         custom.insert("uri".to_string(), Value::String(uri.to_string()));
         custom.insert("path".to_string(), Value::String(path.clone()));
-        custom.insert("layer".to_string(), Value::String(layer.to_string()));
 
         Ok(MemoryMetadata {
             uri: Some(uri.to_string()),
-            user_id: if dimension == "users" {
+            user_id: if dimension == "user" {
                 Some(path.clone())
             } else {
                 None
             },
-            agent_id: if dimension == "agents" {
+            agent_id: if dimension == "agent" {
                 Some(path.clone())
             } else {
                 None
             },
-            run_id: if dimension == "threads" {
+            run_id: if dimension == "session" {
                 Some(path.clone())
             } else {
                 None
             },
             actor_id: None,
             role: None,
-            memory_type,
+            layer: layer.to_string(),
             hash,
             importance_score: 0.5,
             entities: vec![],

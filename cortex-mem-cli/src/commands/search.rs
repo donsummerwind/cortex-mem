@@ -50,9 +50,9 @@ pub async fn execute(
         recursive: true,
     };
 
-    // Perform vector search
+    // Perform layered vector search (L0/L1/L2 hierarchical search)
     let results = operations.vector_engine()
-        .semantic_search(query, &options)
+        .layered_semantic_search(query, &options)
         .await?;
 
     println!("\n{} Found {} results\n", "✓".green().bold(), results.len());

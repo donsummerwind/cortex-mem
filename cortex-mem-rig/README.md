@@ -4,7 +4,7 @@
 
 ## 🧠 Overview
 
-Cortex Memory Rig implements OpenViking-style tiered access tools, allowing AI agents to efficiently retrieve and manipulate memories:
+Cortex Memory Rig implements access tools, allowing AI agents to efficiently retrieve and manipulate memories:
 
 ### Three-Tier Access Architecture
 

@@ -42,6 +42,3 @@ pub enum Error {
 
 /// Result type alias
 pub type Result<T> = std::result::Result<T, Error>;
-
-/// Legacy alias for backward compatibility
-pub type MemoryError = Error;

@@ -52,7 +52,7 @@ impl ChatMessage {
     }
 }
 
-/// 创建带记忆功能的Agent（OpenViking 风格 + 租户隔离）
+/// 创建带记忆功能的Agent（支持租户隔离）
 /// 返回 (Agent, MemoryOperations) 以便外部使用租户隔离的 operations
 pub async fn create_memory_agent(
     data_dir: impl AsRef<std::path::Path>,
@@ -104,7 +104,7 @@ pub async fn create_memory_agent(
         .base_url(&config.llm.api_base_url)
         .build()?;
 
-    // 构建 system prompt（OpenViking 风格）
+    // 构建 system prompt
     let base_system_prompt = if let Some(info) = user_info {
         format!(
             r#"你是一个拥有分层记忆功能的智能 AI 助手。
@@ -113,7 +113,7 @@ pub async fn create_memory_agent(
 
 你的 Bot ID：{bot_id}
 
-记忆工具说明（OpenViking 风格分层访问）：
+记忆工具说明：
 
 🔑 **URI 格式规范（非常重要！）**
 - 所有 URI 必须使用 `cortex://` 前缀，**禁止使用 `memory://`**
@@ -179,7 +179,7 @@ pub async fn create_memory_agent(
 
 记忆隔离说明：
 - 每个 Bot 拥有独立的租户空间（物理隔离）
-- 记忆组织采用 OpenViking 架构：
+- 记忆组织采用的架构：
   - cortex://resources/ - 知识库
   - cortex://user/ - 用户记忆
   - cortex://agent/ - Agent 记忆
@@ -213,7 +213,7 @@ pub async fn create_memory_agent(
 
 你的 Bot ID：{bot_id}
 
-记忆工具说明（OpenViking 风格分层访问）：
+记忆工具说明：
 
 🔑 **URI 格式规范（非常重要！）**
 - 所有 URI 必须使用 `cortex://` 前缀，**禁止使用 `memory://`**
@@ -290,7 +290,6 @@ pub async fn create_memory_agent(
         base_system_prompt
     };
 
-    // 构建带有 OpenViking 风格记忆工具的 agent
     use rig::client::CompletionClient;
     let completion_model = llm_client
         .completions_api() // Use completions API to get CompletionModel
@@ -532,10 +531,14 @@ impl AgentChatHandler {
     }
 
     /// 进行对话（流式版本，支持多轮工具调用）
+    ///
+    /// 返回 (stream_rx, completion_rx):
+    /// - stream_rx: 流式输出内容
+    /// - completion_rx: 完成时发送完整响应（用于更新历史记录）
     pub async fn chat_stream(
         &mut self,
         user_input: &str,
-    ) -> Result<mpsc::Receiver<String>, anyhow::Error> {
+    ) -> Result<(mpsc::Receiver<String>, mpsc::Receiver<String>), anyhow::Error> {
         self.history.push(ChatMessage::user(user_input));
 
         let chat_history: Vec<Message> = self
@@ -568,14 +571,24 @@ impl AgentChatHandler {
         };
 
         let (tx, rx) = mpsc::channel(100);
+        // 新增：用于通知完成的 channel
+        let (completion_tx, completion_rx) = mpsc::channel(1);
 
         let agent = self.agent.clone();
         let user_input_clone = user_input.to_string();
         let ops_clone = self.operations.clone();
         let session_id_clone = self.session_id.clone();
 
+        // 记录开始处理
+        tracing::info!("🚀 开始处理用户消息 (历史消息: {} 条)", self.history.len());
+
         tokio::spawn(async move {
             let mut full_response = String::new();
+            let start_time = std::time::Instant::now();
+            let mut tool_call_count = 0;
+            let mut chunk_count = 0;
+
+            tracing::info!("🔄 Agent 多轮对话开始...");
 
             let mut stream = agent
                 .stream_chat(prompt_message, chat_history)
@@ -591,18 +604,52 @@ impl AgentChatHandler {
                                 StreamedAssistantContent::Text(text_content) => {
                                     let text = &text_content.text;
                                     full_response.push_str(text);
+                                    chunk_count += 1;
+                                    // 每 20 个 chunk 记录一次进度
+                                    if chunk_count % 20 == 0 {
+                                        tracing::debug!(
+                                            "📝 流式输出进度: {} chunks, {} 字符",
+                                            chunk_count,
+                                            full_response.len()
+                                        );
+                                    }
                                     if tx.send(text.clone()).await.is_err() {
                                         break;
                                     }
                                 }
-                                StreamedAssistantContent::ToolCall { .. } => {
-                                    log::debug!("调用工具中...");
+                                StreamedAssistantContent::ToolCall { tool_call, .. } => {
+                                    tool_call_count += 1;
+                                    let args_str = tool_call.function.arguments.to_string();
+                                    let args_summary = if args_str.len() > 100 {
+                                        format!("{}...", &args_str[..100])
+                                    } else {
+                                        args_str
+                                    };
+                                    tracing::info!(
+                                        "🔧 工具调用 #{}: {} ({})",
+                                        tool_call_count,
+                                        tool_call.function.name,
+                                        args_summary
+                                    );
+                                }
+                                StreamedAssistantContent::ToolCallDelta { id, content, .. } => {
+                                    tracing::debug!("🔧 工具调用增量 [{}]: {:?}", id, content);
                                 }
                                 _ => {}
                             }
                         }
+                        MultiTurnStreamItem::StreamUserItem(_user_content) => {
+                            tracing::debug!("📥 收到用户内容 (工具结果)");
+                        }
                         MultiTurnStreamItem::FinalResponse(final_resp) => {
                             full_response = final_resp.response().to_string();
+                            let elapsed = start_time.elapsed();
+                            tracing::info!(
+                                "✅ 对话完成 [耗时: {:.2}s, 工具调用: {} 次, 响应: {} 字符]",
+                                elapsed.as_secs_f64(),
+                                tool_call_count,
+                                full_response.len()
+                            );
                             let _ = tx.send(full_response.clone()).await;
                             break;
                         }
@@ -611,7 +658,7 @@ impl AgentChatHandler {
                         }
                     },
                     Err(e) => {
-                        log::error!("流式处理错误: {:?}", e);
+                        tracing::error!("❌ 流式处理错误: {:?}", e);
                         let error_msg = format!("[错误: {}]", e);
                         let _ = tx.send(error_msg).await;
                         break;
@@ -621,6 +668,8 @@ impl AgentChatHandler {
 
             // 对话结束后自动保存到 session
             if let Some(ops) = ops_clone {
+                tracing::info!("💾 保存对话到 session: {}", session_id_clone);
+
                 if !user_input_clone.is_empty() {
                     let user_store = cortex_mem_tools::StoreArgs {
                         content: user_input_clone.clone(),
@@ -651,22 +700,34 @@ impl AgentChatHandler {
                     }
                 }
             }
+
+            // 🔧 发送完成通知（包含完整响应，用于更新历史记录）
+            let _ = completion_tx.send(full_response.clone());
         });
 
-        Ok(rx)
+        Ok((rx, completion_rx))
+    }
+
+    /// 将 assistant 响应添加到历史记录
+    /// 在流式完成后由调用方调用
+    pub fn add_assistant_response(&mut self, response: String) {
+        self.history.push(ChatMessage::assistant(response));
     }
 
     /// 进行对话（非流式版本）
     #[allow(dead_code)]
     pub async fn chat(&mut self, user_input: &str) -> Result<String, anyhow::Error> {
-        let mut rx = self.chat_stream(user_input).await?;
+        let (mut rx, mut completion_rx) = self.chat_stream(user_input).await?;
         let mut response = String::new();
 
         while let Some(chunk) = rx.recv().await {
             response.push_str(&chunk);
         }
 
-        self.history.push(ChatMessage::assistant(response.clone()));
+        // 等待完成通知并更新历史
+        if let Some(full_response) = completion_rx.recv().await {
+            self.history.push(ChatMessage::assistant(full_response));
+        }
 
         Ok(response)
     }

@@ -111,6 +111,7 @@ cortex://resources/{resource_name}/
 - <strong>Session Management:</strong> Track conversation timelines, participants, and message history with automatic indexing and event-driven processing.
 - <strong>Multi-Tenancy Support:</strong> Isolated memory spaces for different users and agents within a single deployment via tenant-aware collection naming.
 - <strong>Event-Driven Automation:</strong> File watchers and auto-indexers for background processing, synchronization, and profile enrichment.
+- <strong>LLM Result Caching:</strong> Intelligent caching with LRU eviction and TTL expiration reduces redundant LLM API calls by 50-75%, with cascade layer debouncing for 70-90% reduction in layer updates.
 - <strong>Agent Framework Integration:</strong> Built-in support for Rig framework and Model Context Protocol (MCP).
 - <strong>Web Dashboard:</strong> Svelte 5 SPA (Insights) for monitoring, tenant management, and semantic search visualization.
 

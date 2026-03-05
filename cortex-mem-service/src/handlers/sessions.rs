@@ -9,7 +9,7 @@ use crate::{
     models::{ApiResponse, SessionResponse, AddMessageRequest},
     state::AppState,
 };
-use cortex_mem_core::{FilesystemOperations, session::SessionMetadata};
+use cortex_mem_core::session::SessionMetadata;
 
 /// Create a new session
 pub async fn create_session(
@@ -24,9 +24,17 @@ pub async fn create_session(
     let title = payload.get("title")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    
+    let user_id = payload.get("user_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    
+    let agent_id = payload.get("agent_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
     let session_mgr = state.session_manager.write().await;
-    let mut metadata = session_mgr.create_session(&thread_id).await?;
+    let mut metadata = session_mgr.create_session_with_ids(&thread_id, user_id, agent_id).await?;
     
     // Set title if provided
     if let Some(t) = title {
@@ -104,7 +112,7 @@ pub async fn add_message(
     Path(thread_id): Path<String>,
     Json(payload): Json<AddMessageRequest>,
 ) -> Result<Json<ApiResponse<String>>> {
-    use cortex_mem_core::{Message, MessageRole, MessageStorage};
+    use cortex_mem_core::MessageRole;
 
     let role = match payload.role.to_lowercase().as_str() {
         "user" => MessageRole::User,
@@ -115,21 +123,20 @@ pub async fn add_message(
         )),
     };
 
-    let message = Message::new(role, payload.content);
+    // v2.5: Use SessionManager::add_message to trigger MemoryEventCoordinator events
+    // This ensures proper event chain for automatic indexing and layer generation
+    let session_mgr = state.session_manager.read().await;
+    let message = session_mgr.add_message(&thread_id, role, payload.content).await?;
     
-    // Save message using MessageStorage
-    let message_storage = MessageStorage::new(state.filesystem.clone());
-    let message_uri = message_storage.save_message(&thread_id, &message).await?;
-    
-    // Update session metadata
-    let session_mgr = state.session_manager.write().await;
-    let mut metadata = session_mgr.load_session(&thread_id).await?;
-    metadata.update_message_count(metadata.message_count + 1);
-    
-    // Save updated metadata
-    let metadata_uri = format!("cortex://session/{}/.session.json", thread_id);
-    let metadata_json = serde_json::to_string_pretty(&metadata)?;
-    state.filesystem.write(&metadata_uri, &metadata_json).await?;
+    // Build message URI
+    let message_uri = format!(
+        "cortex://session/{}/timeline/{}/{}/{}_{}.md",
+        thread_id,
+        message.timestamp.format("%Y-%m"),
+        message.timestamp.format("%d"),
+        message.timestamp.format("%H_%M_%S"),
+        &message.id[..8]
+    );
 
     Ok(Json(ApiResponse::success(format!("Message saved to {}", message_uri))))
 }

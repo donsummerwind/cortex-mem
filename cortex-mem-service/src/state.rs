@@ -1,5 +1,5 @@
 use cortex_mem_core::{
-    AutomationConfig, CortexFilesystem, CortexMem, CortexMemBuilder, EmbeddingClient,
+    CortexFilesystem, CortexMem, CortexMemBuilder, EmbeddingClient,
     EmbeddingConfig, LLMClient, QdrantConfig, SessionManager, VectorSearchEngine,
 };
 use std::path::PathBuf;
@@ -59,20 +59,13 @@ impl AppState {
             builder = builder.with_qdrant(qdrant_cfg);
         }
 
-        // 配置自动化（对于service，使用实时索引模式）
-        builder = builder.with_automation(AutomationConfig {
-            auto_index: true,
-            auto_extract: true,
-            index_on_message: true, // ✅ 实时索引（API服务需要即时搜索）
-            index_on_close: true,
-            index_batch_delay: 1, // 1秒批处理
-            auto_generate_layers_on_startup: false,
-            generate_layers_every_n_messages: 5,
-        });
+        // v2.5: 使用 MemoryEventCoordinator 进行记忆提取和层级更新
+        // 配置协调器（可选，使用默认配置即可）
+        // builder = builder.with_coordinator_config(CoordinatorConfig::default());
 
         // 构建Cortex Memory
         let cortex = builder.build().await?;
-        tracing::info!("✅ Cortex Memory initialized with unified automation");
+        tracing::info!("✅ Cortex Memory initialized with v2.5 MemoryEventCoordinator");
 
         // 从Cortex Memory获取组件
         let filesystem = cortex.filesystem();
@@ -348,52 +341,4 @@ impl AppState {
         Ok(())
     }
 
-    /// Helper method to create QdrantVectorStore for manual indexing
-    /// This is needed because AutoIndexer requires concrete QdrantVectorStore type
-    ///
-    /// Supports tenant-specific collection
-    pub async fn create_qdrant_store(&self) -> anyhow::Result<cortex_mem_core::QdrantVectorStore> {
-        // Get current tenant ID
-        let tenant_id = self.current_tenant_id.read().await.clone();
-
-        // Try to load config from file first, then fall back to environment variables
-        if let Ok(config) = cortex_mem_config::Config::load("config.toml") {
-            let mut qdrant_config = QdrantConfig {
-                url: config.qdrant.url,
-                collection_name: config.qdrant.collection_name,
-                embedding_dim: config.qdrant.embedding_dim,
-                timeout_secs: config.qdrant.timeout_secs,
-                api_key: config.qdrant.api_key.clone(),
-                tenant_id: None, // 初始化为None
-            };
-
-            // Set tenant ID if available
-            if let Some(tid) = tenant_id {
-                qdrant_config.tenant_id = Some(tid);
-            }
-
-            cortex_mem_core::QdrantVectorStore::new(&qdrant_config)
-                .await
-                .map_err(|e| anyhow::anyhow!(e))
-        } else if let (Ok(url), Ok(collection)) = (
-            std::env::var("QDRANT_URL"),
-            std::env::var("QDRANT_COLLECTION"),
-        ) {
-            let qdrant_config = QdrantConfig {
-                url,
-                collection_name: collection,
-                embedding_dim: std::env::var("QDRANT_EMBEDDING_DIM")
-                    .ok()
-                    .and_then(|s| s.parse().ok()),
-                timeout_secs: 30,
-                api_key: std::env::var("QDRANT_API_KEY").ok(),
-                tenant_id, // 使用当前租户ID
-            };
-            cortex_mem_core::QdrantVectorStore::new(&qdrant_config)
-                .await
-                .map_err(|e| anyhow::anyhow!(e))
-        } else {
-            Err(anyhow::anyhow!("Qdrant configuration not found"))
-        }
-    }
 }

@@ -1,6 +1,6 @@
-// Tools module - OpenViking style memory tools
+// Tools module
 
-pub mod tiered;
-pub mod search;
 pub mod filesystem;
+pub mod search;
 pub mod storage;
+pub mod tiered;

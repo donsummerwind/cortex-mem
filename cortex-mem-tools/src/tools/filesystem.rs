@@ -1,4 +1,4 @@
-// Filesystem Tools - OpenViking style directory browsing
+// Filesystem Tools
 
 use crate::{MemoryOperations, Result, types::*};
 use cortex_mem_core::{ContextLayer, FilesystemOperations};

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 /// Cortex URI representing a memory resource
 ///
-/// Simplified URI structure (OpenViking-aligned):
+/// Simplified URI structure:
 ///
 /// ```text
 /// cortex://

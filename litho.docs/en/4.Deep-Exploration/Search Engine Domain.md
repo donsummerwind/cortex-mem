@@ -59,7 +59,7 @@ graph TD
 
 ## 3. The Three-Layer Retrieval Model
 
-The system implements a **progressive disclosure** pattern inspired by the TARS/OpenViking memory specification, searching across three abstraction levels:
+The system implements a **progressive disclosure** pattern inspired by the TARS memory specification, searching across three abstraction levels:
 
 ### 3.1 Layer Definitions
 
