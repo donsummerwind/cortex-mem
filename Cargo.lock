@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-mem-cli"
-version = "2.1.0"
+version = "2.5.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -616,7 +616,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-mem-config"
-version = "1.0.0"
+version = "2.5.0"
 dependencies = [
  "anyhow",
  "directories 5.0.1",
@@ -627,7 +627,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-mem-core"
-version = "2.1.0"
+version = "2.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -656,7 +656,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-mem-mcp"
-version = "2.1.0"
+version = "2.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -679,7 +679,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-mem-rig"
-version = "2.0.0"
+version = "2.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -695,7 +695,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-mem-service"
-version = "2.0.0"
+version = "2.5.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -718,7 +718,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-mem-tars"
-version = "2.0.0"
+version = "2.5.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -758,7 +758,7 @@ dependencies = [
 
 [[package]]
 name = "cortex-mem-tools"
-version = "2.1.0"
+version = "2.5.0"
 dependencies = [
  "anyhow",
  "async-trait",

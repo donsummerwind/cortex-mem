@@ -2,9 +2,10 @@
 name = "cortex-mem-mcp"
 version.workspace = true
 edition.workspace = true
-authors = ["Cortex-Mem Contributors"]
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "MCP server for Cortex-Mem memory management"
-license = "MIT"
 
 [[bin]]
 name = "cortex-mem-mcp"

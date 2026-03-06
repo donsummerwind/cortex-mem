@@ -1,7 +1,11 @@
 [package]
 name = "cortex-mem-tars"
-version = "2.0.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TUI application for Cortex Memory with AI-powered features"
 
 [dependencies]
 # Cortex Memory V2 dependencies

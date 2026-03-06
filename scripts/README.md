@@ -6,14 +6,15 @@
 
 ### 1. 版本更新工具 (`update-versions.js`)
 
+- 从 workspace `Cargo.toml` 读取版本号（`[workspace.package].version`）
 - 扫描项目中所有的 `Cargo.toml` 文件
-- 更新每个 crate 的版本号为指定值（默认为 1.0.0）
+- 更新每个 crate 的版本号（支持 `version.workspace = true` 和硬编码版本）
 - 自动更新内部依赖引用的版本号
-- 排除 `target`、`node_modules` 和 `.git` 目录
+- 排除 `target`、`node_modules`、`.git` 和 `cortex-mem-insights` 目录
 
 ### 2. Crates.io 发布工具 (`publish-crates.js`)
 
-- 按依赖顺序自动发布多个 crate 到 crates.io
+- 按依赖顺序自动发布多个 crate 到 crates.io（排除 `cortex-mem-insights` web 项目）
 - 自动处理本地路径依赖（path dependencies）
 - 支持预发布检查（dry-run）
 - 自动等待 crate 在 crates.io 上可用
@@ -42,11 +43,14 @@ npm run update-versions
 node update-versions.js
 ```
 
-**自定义版本**：编辑 `update-versions.js` 文件顶部的 `VERSION` 常量：
+**自定义版本**：编辑根目录 `Cargo.toml` 中的 workspace 版本：
 
-```javascript
-const VERSION = '2.0.0'; // 更改为你想要的版本号
+```toml
+[workspace.package]
+version = "2.5.0"  # 更改为你想要的版本号
 ```
+
+脚本会自动从这个位置读取版本号。对于使用 `version.workspace = true` 的 crate，无需手动修改。
 
 ### 发布到 crates.io
 
@@ -86,14 +90,18 @@ node publish-crates.js --skip-wait
 
 ## 发布流程
 
-发布工具会按以下顺序发布 crate（依赖顺序）：
+发布工具会按以下顺序发布 crate（基于依赖关系排序）：
 
-1. **cortex-mem-config** - 基础配置库
-2. **cortex-mem-core** - 核心引擎
-3. **cortex-mem-service** - HTTP 服务
-4. **cortex-mem-cli** - 命令行工具
-5. **cortex-mem-mcp** - MCP 服务器
-6. **cortex-mem-tars** - TUI 应用
+1. **cortex-mem-config** - 基础配置库（无内部依赖）
+2. **cortex-mem-core** - 核心引擎（依赖 config）
+3. **cortex-mem-tools** - 高层工具（依赖 core）
+4. **cortex-mem-rig** - Rig 框架集成（依赖 core, tools）
+5. **cortex-mem-service** - HTTP 服务（依赖 core, config）
+6. **cortex-mem-cli** - 命令行工具（依赖 core, tools, config）
+7. **cortex-mem-mcp** - MCP 服务器（依赖 core, tools, config）
+8. **cortex-mem-tars** - TUI 应用（依赖 config, core, tools, rig）
+
+> **注意**：`cortex-mem-insights` 是 Svelte web 项目，不发布到 crates.io。
 
 ### 发布步骤
 
@@ -126,32 +134,34 @@ Cortex Mem Crates Publishing Tool
 ============================================================
 
 📦 Crates to publish (in dependency order):
-  1. cortex-mem-config v1.0.0
-  2. cortex-mem-core v1.0.0
-  3. cortex-mem-service v1.0.0
-  4. cortex-mem-cli v1.0.0
-  5. cortex-mem-mcp v1.0.0
-  6. cortex-mem-tars v1.0.0
+  1. cortex-mem-config v2.5.0
+  2. cortex-mem-core v2.5.0
+  3. cortex-mem-tools v2.5.0
+  4. cortex-mem-rig v2.0.0
+  5. cortex-mem-service v2.0.0
+  6. cortex-mem-cli v2.5.0
+  7. cortex-mem-mcp v2.5.0
+  8. cortex-mem-tars v2.0.0
 
 ============================================================
 
 ⚠️  This will publish the above crates to crates.io
 Press Ctrl+C to cancel, or press Enter to continue...
 
-📦 [1/6] Publishing cortex-mem-config v1.0.0
+📦 [1/8] Publishing cortex-mem-config v2.5.0
     ⚠️  Found path dependencies, converting for publishing...
     ✓ Dependencies converted
     🔍 Running dry-run check...
     ✓ Dry run passed
     🚀 Publishing to crates.io...
-    ✓ cortex-mem-config v1.0.0 published successfully!
+    ✓ cortex-mem-config v2.5.0 published successfully!
     Restored original Cargo.toml
 
 ...
 
 ============================================================
 Publish Summary:
-  ✓ 6 crates published successfully
+  ✓ 8 crates published successfully
 ============================================================
 
 🎉 All crates published successfully!

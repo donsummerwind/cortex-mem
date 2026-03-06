@@ -24,7 +24,8 @@ function colorize(text, color) {
 	return `${colors[color]}${text}${colors.reset}`;
 }
 
-// Crates to publish in dependency order
+// Crates to publish in dependency order (excluding cortex-mem-insights which is a web project)
+// Order based on dependencies: config -> core -> tools -> rig -> (service, cli, mcp) -> tars
 const CRATES_TO_PUBLISH = [
 	{ name: 'cortex-mem-config', path: 'cortex-mem-config' },
 	{ name: 'cortex-mem-core', path: 'cortex-mem-core' },

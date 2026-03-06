@@ -4,9 +4,29 @@ const fs = require('fs');
 const path = require('path');
 const glob = require('glob');
 
-const VERSION = '1.0.0';
+// Get project root directory (parent of scripts directory)
+const PROJECT_ROOT = path.resolve(__dirname, '..');
+
+// Read version from workspace Cargo.toml
+function getWorkspaceVersion() {
+	const workspaceCargoPath = path.join(PROJECT_ROOT, 'Cargo.toml');
+	const content = fs.readFileSync(workspaceCargoPath, 'utf8');
+	// Look for version in [workspace.package] section
+	const match = content.match(/^\[workspace\.package\][\s\S]*?^version\s*=\s*"([^"]+)"/m);
+	if (match) return match[1];
+	// Fallback: look for workspace.version
+	const fallbackMatch = content.match(/^version\s*=\s*"([^"]+)"/m);
+	return fallbackMatch ? fallbackMatch[1] : null;
+}
+
+const VERSION = getWorkspaceVersion();
+if (!VERSION) {
+	console.error('Error: Could not find version in workspace Cargo.toml');
+	process.exit(1);
+}
+
 const CARGO_TOML_PATTERN = '**/Cargo.toml';
-const EXCLUDE_PATTERNS = ['**/target/**', '**/node_modules/**', '**/.git/**'];
+const EXCLUDE_PATTERNS = ['**/target/**', '**/node_modules/**', '**/.git/**', '**/cortex-mem-insights/**'];
 
 // ANSI color codes for terminal output
 const colors = {
@@ -32,12 +52,15 @@ function findCargoTomlFiles() {
   try {
     const files = glob.sync(CARGO_TOML_PATTERN, {
       ignore: EXCLUDE_PATTERNS,
-      cwd: process.cwd(),
+      cwd: PROJECT_ROOT,
       absolute: true
     });
 
-    console.log(colorize(`Found ${files.length} Cargo.toml files`, 'green'));
-    return files;
+    // Exclude the root Cargo.toml (workspace file)
+    const filteredFiles = files.filter(f => f !== path.join(PROJECT_ROOT, 'Cargo.toml'));
+
+    console.log(colorize(`Found ${filteredFiles.length} Cargo.toml files`, 'green'));
+    return filteredFiles;
   } catch (error) {
     console.error(colorize('Error finding Cargo.toml files:', 'red'), error);
     process.exit(1);
@@ -48,28 +71,33 @@ function findCargoTomlFiles() {
 function updateVersionInCargoToml(filePath) {
   try {
     const content = fs.readFileSync(filePath, 'utf8');
-    const lines = content.split('\n');
-    let versionFound = false;
+    let updated = false;
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-
-      // Look for version in package section
-      if (line.trim().startsWith('version = ')) {
-        lines[i] = `version = "${VERSION}"`;
-        versionFound = true;
-        console.log(colorize(`  Updated version in ${path.relative(process.cwd(), filePath)}`, 'green'));
-        break;
+    // Update version.workspace = true (no change needed, it follows workspace)
+    // Update standalone version = "x.x.x" in [package] section
+    const newContent = content.replace(
+      /^(\[package\][\s\S]*?)(^version\s*=\s*)"[^"]+"/m,
+      (match, packageSection, versionPrefix) => {
+        // Check if it's using version.workspace = true
+        if (packageSection.includes('version.workspace = true')) {
+          return match; // Already using workspace version, no change
+        }
+        updated = true;
+        return packageSection + versionPrefix + '"' + VERSION + '"';
       }
-    }
+    );
 
-    if (!versionFound) {
-      console.log(colorize(`  No version found in ${path.relative(process.cwd(), filePath)}`, 'yellow'));
+    if (updated) {
+      fs.writeFileSync(filePath, newContent, 'utf8');
+      console.log(colorize(`  Updated version in ${path.relative(PROJECT_ROOT, filePath)}`, 'green'));
+      return true;
+    } else {
+      // Check if using workspace version
+      if (content.includes('version.workspace = true')) {
+        console.log(colorize(`  Using workspace version in ${path.relative(PROJECT_ROOT, filePath)}`, 'blue'));
+      }
       return false;
     }
-
-    fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
-    return true;
   } catch (error) {
     console.error(colorize(`Error processing ${filePath}:`, 'red'), error);
     return false;
@@ -80,29 +108,40 @@ function updateVersionInCargoToml(filePath) {
 function updateInternalDependencies(filePath) {
   try {
     const content = fs.readFileSync(filePath, 'utf8');
-    const lines = content.split('\n');
     let updated = false;
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+    // List of internal crate names
+    const internalCrates = [
+      'cortex-mem-core',
+      'cortex-mem-config',
+      'cortex-mem-tools',
+      'cortex-mem-rig',
+      'cortex-mem-service',
+      'cortex-mem-cli',
+      'cortex-mem-mcp'
+    ];
 
-      // Look for internal dependencies
-      if (line.includes('path = ')) {
-        // Check if it's an internal dependency by checking if it has a path to a local crate
-        if (line.includes('cortex-mem-') || line.includes('../')) {
-          // Update version for internal dependencies
-          const versionMatch = line.match(/version\s*=\s*"([^"]+)"/);
-          if (versionMatch) {
-            lines[i] = line.replace(/version\s*=\s*"[^"]+"/, `version = "${VERSION}"`);
-            updated = true;
-          }
-        }
+    let newContent = content;
+
+    for (const crateName of internalCrates) {
+      // Match various dependency declaration patterns:
+      // 1. crate-name = { path = "...", version = "x.x.x" }
+      // 2. crate-name = { version = "x.x.x", path = "..." }
+      // 3. crate-name = { path = "..." } (no version, skip)
+      const versionRegex = new RegExp(
+        `(${crateName}\\s*=\\s*\\{[^}]*version\\s*=\\s*)"([^"]+)"`,
+        'g'
+      );
+      
+      if (versionRegex.test(newContent)) {
+        newContent = newContent.replace(versionRegex, `$1"${VERSION}"`);
+        updated = true;
       }
     }
 
     if (updated) {
-      fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
-      console.log(colorize(`  Updated internal dependencies in ${path.relative(process.cwd(), filePath)}`, 'blue'));
+      fs.writeFileSync(filePath, newContent, 'utf8');
+      console.log(colorize(`  Updated internal dependencies in ${path.relative(PROJECT_ROOT, filePath)}`, 'blue'));
     }
 
     return updated;
@@ -121,13 +160,17 @@ function main() {
 
   const files = findCargoTomlFiles();
   let updatedFiles = 0;
+  let skippedFiles = 0;
   let updatedDependencies = 0;
 
   // First pass: update package versions
   console.log(colorize('\nUpdating package versions...', 'cyan'));
   for (const file of files) {
-    if (updateVersionInCargoToml(file)) {
+    const result = updateVersionInCargoToml(file);
+    if (result) {
       updatedFiles++;
+    } else {
+      skippedFiles++;
     }
   }
 

@@ -6,6 +6,7 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Core memory management engine for Cortex Memory system"
 
 [dependencies]
 # Workspace dependencies
