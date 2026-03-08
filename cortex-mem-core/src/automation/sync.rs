@@ -8,6 +8,7 @@ use crate::{
     ContextLayer,
     Result,
 };
+use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -185,32 +186,53 @@ impl SyncManager {
     }
 
     /// 同步单个目录（非递归）
+    /// 
+    /// 优化：在目录级别批量处理 L0/L1，避免每个文件重复检查
     fn sync_directory<'a>(
         &'a self,
         uri: &'a str,
-        layer: &'a str,
+        _layer: &'a str,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<SyncStats>> + Send + 'a>> {
         Box::pin(async move {
             let entries = self.filesystem.list(uri).await?;
             let mut stats = SyncStats::default();
 
-            for entry in entries {
+            // 收集子目录和文件
+            let mut subdirs: Vec<String> = Vec::new();
+            let mut files: Vec<String> = Vec::new();
+
+            for entry in &entries {
                 if entry.is_directory {
-                    // 递归处理子目录
-                    let sub_stats = self.sync_directory(&entry.uri, layer).await?;
-                    stats.add(&sub_stats);
-                } else if entry.name.ends_with(".md") {
-                    // 处理Markdown文件
-                    match self.sync_file(&entry.uri, layer).await {
-                        Ok(true) => stats.indexed_files += 1,
-                        Ok(false) => stats.skipped_files += 1,
-                        Err(e) => {
-                            warn!("Failed to sync {}: {}", entry.uri, e);
-                            stats.error_files += 1;
-                        }
-                    }
-                    stats.total_files += 1;
+                    subdirs.push(entry.uri.clone());
+                } else if entry.name.ends_with(".md") && !entry.name.starts_with('.') {
+                    files.push(entry.uri.clone());
                 }
+            }
+
+            // 先在目录级别批量索引 L0/L1（避免重复）
+            if !files.is_empty() {
+                if let Err(e) = self.sync_directory_layers(uri).await {
+                    debug!("Failed to sync L0/L1 for directory {}: {}", uri, e);
+                }
+            }
+
+            // 然后处理 L2 文件
+            for file_uri in files {
+                match self.sync_file_l2(&file_uri).await {
+                    Ok(true) => stats.indexed_files += 1,
+                    Ok(false) => stats.skipped_files += 1,
+                    Err(e) => {
+                        warn!("Failed to sync {}: {}", file_uri, e);
+                        stats.error_files += 1;
+                    }
+                }
+                stats.total_files += 1;
+            }
+
+            // 递归处理子目录
+            for subdir in subdirs {
+                let sub_stats = self.sync_directory(&subdir, "L2").await?;
+                stats.add(&sub_stats);
             }
 
             Ok(stats)
@@ -237,66 +259,58 @@ impl SyncManager {
                 }
             }
 
-            for entry in entries {
+            // 收集子目录和文件
+            let mut subdirs: Vec<String> = Vec::new();
+            let mut files: Vec<String> = Vec::new();
+
+            for entry in &entries {
                 if entry.is_directory {
-                    // 递归处理子目录
-                    let sub_stats = self.sync_directory_recursive(&entry.uri).await?;
-                    stats.add(&sub_stats);
-                } else if entry.name.ends_with(".md") {
-                    // 处理Markdown文件
-                    match self.sync_file(&entry.uri, "L2").await {
-                        Ok(true) => stats.indexed_files += 1,
-                        Ok(false) => stats.skipped_files += 1,
-                        Err(e) => {
-                            warn!("Failed to sync {}: {}", entry.uri, e);
-                            stats.error_files += 1;
-                        }
-                    }
-                    stats.total_files += 1;
+                    subdirs.push(entry.uri.clone());
+                } else if entry.name.ends_with(".md") && !entry.name.starts_with('.') {
+                    files.push(entry.uri.clone());
                 }
+            }
+
+            // 先在目录级别批量索引 L0/L1（避免重复）
+            if !files.is_empty() {
+                if let Err(e) = self.sync_directory_layers(uri).await {
+                    debug!("Failed to sync L0/L1 for directory {}: {}", uri, e);
+                }
+            }
+
+            // 然后处理 L2 文件
+            for file_uri in files {
+                match self.sync_file_l2(&file_uri).await {
+                    Ok(true) => stats.indexed_files += 1,
+                    Ok(false) => stats.skipped_files += 1,
+                    Err(e) => {
+                        warn!("Failed to sync {}: {}", file_uri, e);
+                        stats.error_files += 1;
+                    }
+                }
+                stats.total_files += 1;
+            }
+
+            // 递归处理子目录
+            for subdir in subdirs {
+                let sub_stats = self.sync_directory_recursive(&subdir).await?;
+                stats.add(&sub_stats);
             }
 
             Ok(stats)
         })
     }
 
-    /// 同步单个文件（支持分层向量索引）
-    async fn sync_file(&self, uri: &str, layer: &str) -> Result<bool> {
-        // 检查是否已经索引（检查L2层）
-        let l2_id = uri_to_vector_id(uri, ContextLayer::L2Detail);
-        if self.is_indexed(&l2_id).await? {
-            debug!("File already indexed: {}", uri);
-            return Ok(false);
-        }
-
-        // 1. 读取并索引L2原始内容
-        let l2_content = self.filesystem.read(uri).await?;
-        let l2_embedding = self.embedding.embed(&l2_content).await?;
-        let l2_metadata = self.parse_metadata(uri, layer)?;
-
-        let l2_memory = Memory {
-            id: l2_id.clone(),
-            content: l2_content.clone(),
-            embedding: l2_embedding,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            metadata: l2_metadata,
-        };
-        self.vector_store.insert(&l2_memory).await?;
-        debug!("L2 indexed: {}", uri);
-
-        // 2. 尝试读取并索引L0 abstract (目录级别)
-        // 对于 timeline 文件，L0/L1 是目录级别的
-        // 例如: cortex://session/abc/timeline/10_00.md 的 L0 是 cortex://session/abc/timeline/.abstract.md
-        // 向量 ID 应该基于目录 URI: cortex://session/abc/timeline
-        let (dir_uri, layer_file_uri) = Self::get_layer_info(uri, "L0");
-        if let Ok(l0_content) = self.filesystem.read(&layer_file_uri).await {
-            // 使用目录 URI 生成向量 ID，确保同一目录下的所有文件共享同一个 L0/L1 向量
-            let l0_id = uri_to_vector_id(&dir_uri, ContextLayer::L0Abstract);
-            if !self.is_indexed(&l0_id).await? {
+    /// 在目录级别批量索引 L0/L1（优化：避免每个文件重复检查）
+    async fn sync_directory_layers(&self, dir_uri: &str) -> Result<()> {
+        // 索引 L0 abstract
+        let l0_file_uri = format!("{}/.abstract.md", dir_uri);
+        let l0_id = uri_to_vector_id(dir_uri, ContextLayer::L0Abstract);
+        
+        if !self.is_indexed(&l0_id).await? {
+            if let Ok(l0_content) = self.filesystem.read(&l0_file_uri).await {
                 let l0_embedding = self.embedding.embed(&l0_content).await?;
-                // 元数据使用目录 URI
-                let l0_metadata = self.parse_metadata(&dir_uri, "L0")?;
+                let l0_metadata = self.parse_metadata(dir_uri, "L0")?;
 
                 let l0_memory = Memory {
                     id: l0_id,
@@ -307,17 +321,18 @@ impl SyncManager {
                     metadata: l0_metadata,
                 };
                 self.vector_store.insert(&l0_memory).await?;
-                debug!("L0 indexed for directory {}: {}", dir_uri, layer_file_uri);
+                debug!("L0 indexed for directory: {}", dir_uri);
             }
         }
 
-        // 3. 尝试读取并索引L1 overview (目录级别)
-        let (dir_uri, layer_file_uri) = Self::get_layer_info(uri, "L1");
-        if let Ok(l1_content) = self.filesystem.read(&layer_file_uri).await {
-            let l1_id = uri_to_vector_id(&dir_uri, ContextLayer::L1Overview);
-            if !self.is_indexed(&l1_id).await? {
+        // 索引 L1 overview
+        let l1_file_uri = format!("{}/.overview.md", dir_uri);
+        let l1_id = uri_to_vector_id(dir_uri, ContextLayer::L1Overview);
+        
+        if !self.is_indexed(&l1_id).await? {
+            if let Ok(l1_content) = self.filesystem.read(&l1_file_uri).await {
                 let l1_embedding = self.embedding.embed(&l1_content).await?;
-                let l1_metadata = self.parse_metadata(&dir_uri, "L1")?;
+                let l1_metadata = self.parse_metadata(dir_uri, "L1")?;
 
                 let l1_memory = Memory {
                     id: l1_id,
@@ -328,43 +343,43 @@ impl SyncManager {
                     metadata: l1_metadata,
                 };
                 self.vector_store.insert(&l1_memory).await?;
-                debug!("L1 indexed for directory {}: {}", dir_uri, layer_file_uri);
+                debug!("L1 indexed for directory: {}", dir_uri);
             }
         }
+
+        Ok(())
+    }
+
+    /// 仅同步文件的 L2 层（优化：分离 L0/L1 处理）
+    async fn sync_file_l2(&self, uri: &str) -> Result<bool> {
+        // 检查是否已经索引（检查L2层）
+        let l2_id = uri_to_vector_id(uri, ContextLayer::L2Detail);
+        if self.is_indexed(&l2_id).await? {
+            debug!("File already indexed (L2): {}", uri);
+            return Ok(false);
+        }
+
+        // 读取并索引L2原始内容
+        let l2_content = self.filesystem.read(uri).await?;
+        let l2_embedding = self.embedding.embed(&l2_content).await?;
+        let l2_metadata = self.parse_metadata(uri, "L2")?;
+
+        let l2_memory = Memory {
+            id: l2_id,
+            content: l2_content,
+            embedding: l2_embedding,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            metadata: l2_metadata,
+        };
+        self.vector_store.insert(&l2_memory).await?;
+        debug!("L2 indexed: {}", uri);
 
         Ok(true)
     }
 
-    /// 获取分层信息 (目录 URI 和层文件 URI)
-    /// 
-    /// 对于 timeline 文件:
-    /// - 输入: cortex://session/abc/timeline/10_00.md
-    /// - L0 输出: (cortex://session/abc/timeline, cortex://session/abc/timeline/.abstract.md)
-    /// 
-    /// 对于 user/agent 记忆:
-    /// - 输入: cortex://user/preferences/language.md
-    /// - L0 输出: (cortex://user/preferences/language.md, cortex://user/preferences/.abstract.md)
-    fn get_layer_info(file_uri: &str, layer: &str) -> (String, String) {
-        let dir = file_uri
-            .rsplit_once('/')
-            .map(|(dir, _)| dir)
-            .unwrap_or(file_uri);
-        
-        let layer_file_uri = match layer {
-            "L0" => format!("{}/.abstract.md", dir),
-            "L1" => format!("{}/.overview.md", dir),
-            _ => file_uri.to_string(),
-        };
-        
-        // 目录 URI 用于向量 ID 生成
-        // 对于 timeline，目录 URI 是文件所在的目录
-        // 对于 user/agent，目录 URI 也是文件所在的目录
-        (dir.to_string(), layer_file_uri)
-    }
-
-    /// 检查文件是否已索引
+    /// 检查向量是否已索引
     async fn is_indexed(&self, id: &str) -> Result<bool> {
-        // 尝试从向量数据库查询
         match self.vector_store.get(id).await {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
@@ -376,11 +391,7 @@ impl SyncManager {
     }
 
     /// 解析URI获取元数据（支持layer标识）
-    fn parse_metadata(
-        &self,
-        uri: &str,
-        layer: &str,
-    ) -> Result<MemoryMetadata> {
+    fn parse_metadata(&self, uri: &str, layer: &str) -> Result<MemoryMetadata> {
         use serde_json::Value;
 
         // 从URI中提取信息
@@ -446,6 +457,25 @@ impl SyncManager {
     async fn generate_timeline_layers(&self, timeline_uri: &str) -> Result<()> {
         let layer_manager = LayerManager::new(self.filesystem.clone(), self.llm_client.clone());
         layer_manager.generate_timeline_layers(timeline_uri).await
+    }
+
+    /// 批量同步多个目录（供外部使用）
+    pub async fn sync_directories(&self, dir_uris: &[String]) -> Result<SyncStats> {
+        let mut total_stats = SyncStats::default();
+        let mut processed_dirs: HashSet<String> = HashSet::new();
+
+        for dir_uri in dir_uris {
+            // 跳过已处理的目录
+            if processed_dirs.contains(dir_uri) {
+                continue;
+            }
+            processed_dirs.insert(dir_uri.clone());
+
+            let stats = self.sync_specific_path(dir_uri).await?;
+            total_stats.add(&stats);
+        }
+
+        Ok(total_stats)
     }
 }
 

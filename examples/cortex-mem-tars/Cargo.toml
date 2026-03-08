@@ -63,7 +63,7 @@ clipboard = "0.5"
 clap = { version = "4.5", features = ["derive"] }
 
 # Audio input
-cpal = "0.15"
-rubato = "0.15"
-whisper-rs = "0.12"
+cpal = "0.17"
+rubato = "0.16"
+whisper-rs = "0.15"
 libc = "0.2"

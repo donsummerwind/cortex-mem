@@ -14,10 +14,11 @@ use cortex_mem_core::{
     layers::manager::LayerManager,
     llm::LLMClient,
     search::VectorSearchEngine,
-    vector_store::{QdrantVectorStore, VectorStore}, // 🔧 添加VectorStore trait
+    vector_store::{QdrantVectorStore, VectorStore},
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::warn;
 
 /// High-level memory operations
 ///
@@ -230,6 +231,7 @@ impl MemoryOperations {
             index_batch_delay: 1,
             auto_generate_layers_on_startup: false, // 启动时不生成（避免阻塞）
             generate_layers_every_n_messages: 5,    // 每5条消息生成一次L0/L1
+            max_concurrent_llm_tasks: 3,            // 最多3个并发LLM任务
         };
 
         // 创建LayerGenerator（用于退出时手动生成）
@@ -736,7 +738,7 @@ impl MemoryOperations {
                 .await
         } else {
             // 降级：如果没有 coordinator，使用简单的等待
-            log::warn!("⚠️ MemoryEventCoordinator 未初始化，使用简单等待");
+            warn!("⚠️ MemoryEventCoordinator 未初始化，使用简单等待");
             tokio::time::sleep(Duration::from_secs(max_wait_secs.min(5))).await;
             true
         }
@@ -760,8 +762,117 @@ impl MemoryOperations {
         if let Some(ref coordinator) = self.event_coordinator {
             coordinator.flush_and_wait(interval).await
         } else {
-            log::warn!("⚠️ MemoryEventCoordinator 未初始化，跳过等待");
+            warn!("⚠️ MemoryEventCoordinator 未初始化，跳过等待");
             true
         }
     }
+
+    // ==================== Long-Running Service APIs ====================
+    // 以下 API 专为长期后台运行的服务（如 ZeroClaw）设计
+
+    /// 手动触发记忆处理（供外部调度使用）
+    ///
+    /// 适用于长期后台运行的服务，可以在任意时间点手动触发记忆处理，
+    /// 而不需要依赖 SessionClosed 事件。
+    ///
+    /// # Arguments
+    /// * `scope` - 处理范围：User, Agent, Session, 或 Resources
+    /// * `owner_id` - 所有者 ID（如 user_id, agent_id, session_id）
+    ///
+    /// # Returns
+    /// 返回处理结果，包含更新的文件数和索引数
+    pub async fn trigger_processing(
+        &self,
+        scope: &str,
+        owner_id: &str,
+    ) -> crate::Result<ProcessingResult> {
+        let memory_scope = match scope.to_lowercase().as_str() {
+            "user" => cortex_mem_core::MemoryScope::User,
+            "agent" => cortex_mem_core::MemoryScope::Agent,
+            "session" => cortex_mem_core::MemoryScope::Session,
+            "resources" => cortex_mem_core::MemoryScope::Resources,
+            _ => {
+                return Err(crate::ToolsError::ValidationError(format!(
+                    "Invalid scope: {}. Valid values: user, agent, session, resources",
+                    scope
+                )));
+            }
+        };
+
+        tracing::info!("Manual trigger processing for {:?}/{}", memory_scope, owner_id);
+
+        // 强制更新层级
+        if let Some(ref coordinator) = self.event_coordinator {
+            coordinator
+                .force_full_update(&memory_scope, owner_id)
+                .await?;
+        } else {
+            warn!("MemoryEventCoordinator 未初始化，无法触发处理");
+            return Ok(ProcessingResult::default());
+        }
+
+        // 索引文件（根据 scope 和 owner_id 确定路径）
+        let sync_stats = match memory_scope {
+            cortex_mem_core::MemoryScope::Session => {
+                self.index_session_files(owner_id).await?
+            }
+            _ => {
+                // 其他 scope 使用全局索引
+                self.index_all_files().await?
+            }
+        };
+
+        Ok(ProcessingResult {
+            scope: scope.to_string(),
+            owner_id: owner_id.to_string(),
+            layers_updated: sync_stats.indexed_files,
+            vectors_indexed: sync_stats.indexed_files,
+        })
+    }
+
+    /// 获取待处理队列状态
+    ///
+    /// 返回当前的事件统计信息，用于监控和调度。
+    pub async fn pending_status(&self) -> PendingStatus {
+        if let Some(ref coordinator) = self.event_coordinator {
+            let stats = coordinator.get_stats().await;
+            PendingStatus {
+                memory_created: stats.memory_created,
+                memory_updated: stats.memory_updated,
+                memory_deleted: stats.memory_deleted,
+                layers_updated: stats.layers_updated,
+                sessions_closed: stats.sessions_closed,
+            }
+        } else {
+            PendingStatus::default()
+        }
+    }
+}
+
+/// 处理结果
+#[derive(Debug, Clone, Default)]
+pub struct ProcessingResult {
+    /// 处理范围
+    pub scope: String,
+    /// 所有者 ID
+    pub owner_id: String,
+    /// 更新的层级文件数
+    pub layers_updated: usize,
+    /// 索引的向量数
+    pub vectors_indexed: usize,
+}
+
+/// 待处理状态（事件统计）
+#[derive(Debug, Clone, Default)]
+pub struct PendingStatus {
+    /// 创建的记忆数
+    pub memory_created: u64,
+    /// 更新的记忆数
+    pub memory_updated: u64,
+    /// 删除的记忆数
+    pub memory_deleted: u64,
+    /// 更新的层级数
+    pub layers_updated: u64,
+    /// 关闭的会话数
+    pub sessions_closed: u64,
 }
