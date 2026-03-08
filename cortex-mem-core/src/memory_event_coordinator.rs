@@ -1033,24 +1033,40 @@ Return ONLY the JSON object. No additional text before or after."#,
         )
     }
 
-    /// Parse the LLM extraction response
+    /// Parse the LLM extraction response with detailed error logging
     fn parse_extraction_response(&self, response: &str) -> ExtractedMemories {
         // Try to extract JSON from the response
         let json_str = if response.starts_with('{') {
             response.to_string()
         } else {
-            response
+            // Find JSON object in response
+            let found = response
                 .find('{')
-                .and_then(|start| response.rfind('}').map(|end| &response[start..=end]))
-                .map(|s| s.to_string())
-                .unwrap_or_default()
+                .and_then(|start| response.rfind('}').map(|end| (start, end)));
+
+            match found {
+                Some((start, end)) => response[start..=end].to_string(),
+                None => {
+                    warn!(
+                        "LLM response contains no JSON object. Response preview: {}",
+                        &response[..response.len().min(500)]
+                    );
+                    return ExtractedMemories::default();
+                }
+            }
         };
 
-        if json_str.is_empty() {
-            return ExtractedMemories::default();
+        match serde_json::from_str::<ExtractedMemories>(&json_str) {
+            Ok(memories) => memories,
+            Err(e) => {
+                warn!(
+                    "Failed to parse LLM extraction response: {}. JSON preview: {}",
+                    e,
+                    &json_str[..json_str.len().min(1000)]
+                );
+                ExtractedMemories::default()
+            }
         }
-
-        serde_json::from_str(&json_str).unwrap_or_default()
     }
 
     /// Get current event statistics

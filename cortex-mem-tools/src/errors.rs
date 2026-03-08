@@ -7,6 +7,10 @@ pub enum ToolsError {
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 
+    /// Validation error
+    #[error("Validation error: {0}")]
+    ValidationError(String),
+
     /// Runtime error during operation
     #[error("Runtime error: {0}")]
     Runtime(String),

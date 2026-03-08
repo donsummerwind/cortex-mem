@@ -8,7 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -298,11 +298,12 @@ impl MemoryMcpService {
             state.message_count = 0;
             state.last_processed = Some(Instant::now());
 
-            // Update global processing time
-            self.last_global_process.store(
-                Instant::now().elapsed().as_secs(),
-                Ordering::Relaxed,
-            );
+            // Update global processing time (Unix timestamp in seconds)
+            let now_ts = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            self.last_global_process.store(now_ts, Ordering::Relaxed);
 
             // Send SessionClosed event to MemoryEventCoordinator
             // This triggers the full processing pipeline:
