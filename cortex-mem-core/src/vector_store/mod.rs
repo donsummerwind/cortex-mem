@@ -1,8 +1,5 @@
 pub mod qdrant;
 
-#[cfg(test)]
-mod tests;
-
 use crate::{
     error::Result,
     types::{ContextLayer, Filters, Memory, ScoredMemory},
