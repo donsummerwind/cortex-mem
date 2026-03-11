@@ -1117,7 +1117,7 @@ impl App {
             // 只索引当前会话新产生的文件（L0/L1/L2），不全量扫描所有历史 session
             // 全量扫描会对每个历史 session 重新生成 timeline L0/L1，耗时极长
             log::info!("📊 开始索引当前会话文件到向量数据库...");
-            let index_timeout = tokio::time::Duration::from_secs(120);
+            let index_timeout = tokio::time::Duration::from_secs(360);
             match tokio::time::timeout(
                 index_timeout,
                 tenant_ops.index_session_files(session_id),
