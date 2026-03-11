@@ -77,6 +77,15 @@ pub struct MemoryEventCoordinator {
     task_completion_tx: watch::Sender<usize>,
     /// 任务完成接收器（用于外部等待）
     task_completion_rx: watch::Receiver<usize>,
+    /// 抑制后台层级联更新的 scope 集合（格式："scope/owner_id"）。
+    ///
+    /// 当 `on_session_closed` 正在同步执行 `update_all_layers` 时，
+    /// 将对应的 "scope/owner_id" 加入此集合，防止后台 event loop 处理
+    /// MemoryCreated/MemoryUpdated 事件时重复触发级联更新。
+    /// update_all_layers 完成后移除对应条目，恢复正常处理。
+    ///
+    /// 使用 scope-granular 集合而非全局 bool，避免误压制不同 scope 的用户。
+    suppress_layer_cascade_scopes: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
 }
 
 impl MemoryEventCoordinator {
@@ -180,6 +189,7 @@ impl MemoryEventCoordinator {
             pending_tasks,
             task_completion_tx,
             task_completion_rx,
+            suppress_layer_cascade_scopes: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         });
 
         (coordinator, event_tx, event_rx)
@@ -547,17 +557,30 @@ impl MemoryEventCoordinator {
             memory_id, memory_type, scope, owner_id
         );
 
-        // Trigger layer cascade update
-        self.layer_updater
-            .on_memory_changed(
-                scope.clone(),
-                owner_id.to_string(),
-                file_uri.to_string(),
-                ChangeType::Add,
-            )
-            .await?;
+        // Skip layer cascade if suppressed for this scope (e.g. during on_session_closed's
+        // update_all_layers), but always continue with vector sync so the new file is indexed.
+        let key = format!("{}/{}", scope, owner_id);
+        let suppress_cascade = self
+            .suppress_layer_cascade_scopes
+            .read()
+            .await
+            .contains(&key);
 
-        // Trigger vector sync
+        if !suppress_cascade {
+            // Trigger layer cascade update
+            self.layer_updater
+                .on_memory_changed(
+                    scope.clone(),
+                    owner_id.to_string(),
+                    file_uri.to_string(),
+                    ChangeType::Add,
+                )
+                .await?;
+        } else {
+            debug!("Layer cascade suppressed for MemoryCreated: {}", key);
+        }
+
+        // Always trigger vector sync (suppression only skips layer cascade, not vector indexing)
         self.vector_sync
             .sync_file_change(file_uri, ChangeType::Add)
             .await?;
@@ -583,17 +606,29 @@ impl MemoryEventCoordinator {
             memory_id, memory_type, scope, owner_id
         );
 
-        // Trigger layer cascade update
-        self.layer_updater
-            .on_memory_changed(
-                scope.clone(),
-                owner_id.to_string(),
-                file_uri.to_string(),
-                ChangeType::Update,
-            )
-            .await?;
+        // Skip layer cascade if suppressed for this scope, but always continue vector sync.
+        let key = format!("{}/{}", scope, owner_id);
+        let suppress_cascade = self
+            .suppress_layer_cascade_scopes
+            .read()
+            .await
+            .contains(&key);
 
-        // Trigger vector sync
+        if !suppress_cascade {
+            // Trigger layer cascade update
+            self.layer_updater
+                .on_memory_changed(
+                    scope.clone(),
+                    owner_id.to_string(),
+                    file_uri.to_string(),
+                    ChangeType::Update,
+                )
+                .await?;
+        } else {
+            debug!("Layer cascade suppressed for MemoryUpdated: {}", key);
+        }
+
+        // Always trigger vector sync
         self.vector_sync
             .sync_file_change(file_uri, ChangeType::Update)
             .await?;
@@ -709,6 +744,20 @@ impl MemoryEventCoordinator {
 
         // 2. Update user memories
         if !extracted.is_empty() {
+            // 2a. 抑制后台 event loop 对 user/agent scope 的级联更新：
+            //     update_memories 写文件时会发出 MemoryCreated/MemoryUpdated 事件，
+            //     后台 loop 处理这些事件会触发 on_memory_changed → update_directory_layers
+            //     → update_root_layers，与下方步骤 2b 的 update_all_layers 完全重复。
+            //     只抑制当前 user/agent scope，不影响并发中其他 scope 的正常处理。
+            //     注意：向量同步不受抑制影响，仍会正常执行。
+            let user_key = format!("{}/{}", crate::memory_index::MemoryScope::User, user_id);
+            let agent_key = format!("{}/{}", crate::memory_index::MemoryScope::Agent, agent_id);
+            {
+                let mut set = self.suppress_layer_cascade_scopes.write().await;
+                set.insert(user_key.clone());
+                set.insert(agent_key.clone());
+            }
+
             let user_result = self
                 .memory_updater
                 .update_memories(user_id, agent_id, session_id, &extracted)
@@ -745,6 +794,13 @@ impl MemoryEventCoordinator {
                 {
                     warn!("Failed to update agent L0/L1 layers: {}", e);
                 }
+            }
+
+            // 2c. 恢复后台级联更新（移除 scope 抑制）
+            {
+                let mut set = self.suppress_layer_cascade_scopes.write().await;
+                set.remove(&user_key);
+                set.remove(&agent_key);
             }
         } else {
             info!("No memories extracted from session {}", session_id);
