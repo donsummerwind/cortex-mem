@@ -51,11 +51,26 @@ pub struct CleanupStats {
 /// 记忆清理服务
 ///
 /// 使用方式：
-/// ```rust,no_run
-/// // 在 Agent 启动时创建，定期手动调用 run_cleanup，或用 tokio::spawn + interval 运行
-/// let svc = MemoryCleanupService::new(index_manager, config, Some(vector_sync));
-/// let stats = svc.run_cleanup(&MemoryScope::User, "alice").await?;
-/// println!("Archived: {}, Deleted: {}", stats.archived, stats.deleted);
+/// ```rust,ignore
+/// use cortex_mem_core::{MemoryCleanupService, MemoryCleanupConfig, MemoryScope, MemoryIndexManager};
+/// use std::sync::Arc;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     // 创建索引管理器和配置
+///     let index_manager = Arc::new(MemoryIndexManager::new("./cortex-data"));
+///     let config = MemoryCleanupConfig::default();
+///     let vector_sync = None; // 可选的向量同步管理器
+///
+///     // 创建清理服务
+///     let svc = MemoryCleanupService::new(index_manager, config, vector_sync);
+///
+///     // 执行清理
+///     let stats = svc.run_cleanup(&MemoryScope::User, "alice").await?;
+///     println!("Archived: {}, Deleted: {}", stats.archived, stats.deleted);
+///
+///     Ok(())
+/// }
 /// ```
 pub struct MemoryCleanupService {
     index_manager: Arc<MemoryIndexManager>,
