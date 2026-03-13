@@ -123,6 +123,17 @@ pub async fn add_message(
         )),
     };
 
+    // Ensure the session exists before adding a message (auto-create if missing)
+    {
+        let session_mgr = state.session_manager.read().await;
+        if session_mgr.load_session(&thread_id).await.is_err() {
+            drop(session_mgr);
+            let session_mgr = state.session_manager.write().await;
+            session_mgr.create_session_with_ids(&thread_id, None, None).await?;
+            tracing::info!("Auto-created session '{}' on first message", thread_id);
+        }
+    }
+
     // Use SessionManager::add_message to trigger MemoryEventCoordinator events
     // This ensures proper event chain for automatic indexing and layer generation
     let session_mgr = state.session_manager.read().await;
