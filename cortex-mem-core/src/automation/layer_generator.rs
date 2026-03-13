@@ -342,11 +342,11 @@ impl LayerGenerator {
             return Ok(());
         }
 
-        // 2. Read directory content (aggregate all sub-files)
-        let content = self.aggregate_directory_content(uri).await?;
+        // 2. Read directory content (aggregate all sub-files, including subdirectories recursively)
+        let content = self.aggregate_directory_content_recursive(uri).await?;
 
         if content.is_empty() {
-            debug!("Directory is empty, skipping: {}", uri);
+            debug!("Directory has no leaf content, skipping: {}", uri);
             return Ok(());
         }
 
@@ -468,40 +468,47 @@ impl LayerGenerator {
     }
 
     /// 聚合目录内容
-    async fn aggregate_directory_content(&self, uri: &str) -> Result<String> {
-        let entries = self.filesystem.list(uri).await?;
-        let mut content = String::new();
+    /// 递归聚合目录内容（包含所有子目录的叶子文件）
+    /// 用于中间层目录（如 timeline/2026-03），它们没有直接文件但有子目录内容
+    fn aggregate_directory_content_recursive<'a>(
+        &'a self,
+        uri: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            let entries = match self.filesystem.list(uri).await {
+                Ok(e) => e,
+                Err(_) => return Ok(String::new()),
+            };
+            let mut content = String::new();
 
-        for entry in entries {
-            // 跳过隐藏文件和目录
-            if entry.name.starts_with('.') || entry.is_directory {
-                continue;
-            }
-
-            // 只读取文本文件
-            if entry.name.ends_with(".md") || entry.name.ends_with(".txt") {
-                match self.filesystem.read(&entry.uri).await {
-                    Ok(file_content) => {
-                        content.push_str(&format!("\n\n=== {} ===\n\n", entry.name));
-                        content.push_str(&file_content);
+            for entry in entries {
+                if entry.name.starts_with('.') {
+                    continue;
+                }
+                if entry.is_directory {
+                    let sub = self.aggregate_directory_content_recursive(&entry.uri).await?;
+                    if !sub.is_empty() {
+                        content.push_str(&sub);
                     }
-                    Err(e) => {
-                        debug!("Failed to read {}: {}", entry.uri, e);
+                } else if entry.name.ends_with(".md") || entry.name.ends_with(".txt") {
+                    match self.filesystem.read(&entry.uri).await {
+                        Ok(file_content) => {
+                            content.push_str(&format!("\n\n=== {} ===\n\n", entry.name));
+                            content.push_str(&file_content);
+                        }
+                        Err(e) => debug!("Failed to read {}: {}", entry.uri, e),
                     }
                 }
+                // 截断保护
+                if content.chars().count() > 10000 {
+                    content = content.chars().take(10000).collect();
+                    content.push_str("\n\n[内容已截断...]");
+                    return Ok(content);
+                }
             }
-        }
 
-        // 截断到合理长度（避免超出 LLM 上下文限制）
-        let max_chars = 10000;
-        if content.chars().count() > max_chars {
-            let truncated: String = content.chars().take(max_chars).collect();
-            let mut content = truncated;
-            content.push_str("\n\n[内容已截断...]");
-            return Ok(content);
-        }
-
-        Ok(content)
+            Ok(content)
+        })
     }
 
     /// 强制执行 Abstract 长度限制

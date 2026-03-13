@@ -6,7 +6,7 @@
 use crate::embedding::EmbeddingClient;
 use crate::filesystem::{CortexFilesystem, FilesystemOperations};
 use crate::memory_events::ChangeType;
-use crate::types::Memory;
+use crate::types::{Memory, MemoryMetadata};
 use crate::vector_store::{QdrantVectorStore, VectorStore, uri_to_vector_id};
 use crate::{ContextLayer, Result};
 use std::sync::Arc;
@@ -114,7 +114,11 @@ impl VectorSyncManager {
             embedding,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
-            metadata: Default::default(),
+            metadata: MemoryMetadata {
+                uri: Some(file_uri.to_string()),
+                layer: "L2".to_string(),
+                ..Default::default()
+            },
         };
         
         // Insert into vector store
@@ -191,7 +195,11 @@ impl VectorSyncManager {
                             embedding,
                             created_at: chrono::Utc::now(),
                             updated_at: chrono::Utc::now(),
-                            metadata: Default::default(),
+                            metadata: MemoryMetadata {
+                                uri: Some(dir_uri.to_string()),
+                                layer: "L0".to_string(),
+                                ..Default::default()
+                            },
                         };
                         
                         self.vector_store.insert(&memory).await?;
@@ -216,7 +224,11 @@ impl VectorSyncManager {
                             embedding,
                             created_at: chrono::Utc::now(),
                             updated_at: chrono::Utc::now(),
-                            metadata: Default::default(),
+                            metadata: MemoryMetadata {
+                                uri: Some(dir_uri.to_string()),
+                                layer: "L1".to_string(),
+                                ..Default::default()
+                            },
                         };
                         
                         self.vector_store.insert(&memory).await?;

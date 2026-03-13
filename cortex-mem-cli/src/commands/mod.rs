@@ -7,3 +7,4 @@ pub mod search;
 pub mod session;
 pub mod stats;
 pub mod tenant;
+pub mod vector;

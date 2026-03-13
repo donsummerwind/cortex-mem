@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 mod commands;
-use commands::{add, delete, get, layers, list, search, session, stats, tenant};
+use commands::{add, delete, get, layers, list, search, session, stats, tenant, vector};
 
 /// Cortex-Mem CLI - File-based memory management for AI Agents
 #[derive(Parser)]
@@ -114,6 +114,12 @@ enum Commands {
         action: LayersAction,
     },
 
+    /// Vector index management
+    Vector {
+        #[command(subcommand)]
+        action: VectorAction,
+    },
+
     /// Tenant management
     Tenant {
         #[command(subcommand)]
@@ -153,6 +159,22 @@ enum LayersAction {
 
     /// Regenerate oversized .abstract files (> 2K characters)
     RegenerateOversized,
+}
+
+#[derive(Subcommand)]
+enum VectorAction {
+    /// Show vector index status (stale vectors, coverage)
+    Status,
+
+    /// Clean stale vectors (no URI) and re-sync all files to vector database
+    Reindex,
+
+    /// Delete vectors whose corresponding files have been removed from disk
+    Prune {
+        /// Preview what would be deleted without making changes
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -291,6 +313,17 @@ async fn main() -> Result<()> {
             }
             LayersAction::RegenerateOversized => {
                 layers::regenerate_oversized(operations).await?;
+            }
+        },
+        Commands::Vector { action } => match action {
+            VectorAction::Status => {
+                vector::status(operations).await?;
+            }
+            VectorAction::Reindex => {
+                vector::reindex(operations).await?;
+            }
+            VectorAction::Prune { dry_run } => {
+                vector::prune(operations, dry_run).await?;
             }
         },
         Commands::Tenant { .. } => {
