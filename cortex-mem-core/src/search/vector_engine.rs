@@ -521,6 +521,19 @@ impl VectorSearchEngine {
                                     content: Some(l2_memory.content),
                                 });
                             }
+                        } else {
+                            // L2 未索引，仅凭 L0/L1 加权降级
+                            let combined_score = l0_score * 0.4 + l1_score * 0.6;
+                            if combined_score >= options.threshold {
+                                if let Ok(content) = self.filesystem.read(&entry.uri).await {
+                                    final_results.push(SearchResult {
+                                        uri: entry.uri.clone(),
+                                        score: combined_score,
+                                        snippet: Self::extract_snippet(&content, &intent.rewritten_query),
+                                        content: Some(content),
+                                    });
+                                }
+                            }
                         }
                     }
                 }

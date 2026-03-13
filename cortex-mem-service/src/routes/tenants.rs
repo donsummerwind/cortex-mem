@@ -7,6 +7,6 @@ use std::sync::Arc;
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/tenants", get(crate::handlers::tenants::list_tenants))
-        .route("/tenants/switch", post(crate::handlers::tenants::switch_tenant))
+        .route("/", get(crate::handlers::tenants::list_tenants))
+        .route("/switch", post(crate::handlers::tenants::switch_tenant))
 }

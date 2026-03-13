@@ -54,11 +54,11 @@ class ApiClient {
 
 	// Tenant endpoints
 	async listTenants(): Promise<string[]> {
-		return this.request<string[]>('/tenants/tenants');
+		return this.request<string[]>('/tenants');
 	}
 
 	async switchTenant(tenantId: string): Promise<string> {
-		const result = await this.request<string>('/tenants/tenants/switch', {
+		const result = await this.request<string>('/tenants/switch', {
 			method: 'POST',
 			body: JSON.stringify({ tenant_id: tenantId })
 		});
