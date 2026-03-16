@@ -128,13 +128,34 @@ export interface ServiceStatus {
 }
 
 export async function checkServiceStatus(): Promise<ServiceStatus> {
-	const qdrant = await isPortOpen(6333);
-	const cortexMemService = await isPortOpen(8085);
+	const qdrant = await isQdrantRunning();
+	const cortexMemService = await isServiceRunning(8085);
 
 	return { qdrant, cortexMemService };
 }
 
-async function isPortOpen(port: number): Promise<boolean> {
+async function isQdrantRunning(): Promise<boolean> {
+	// Qdrant uses root path or /collections for health check
+	try {
+		const response = await fetch(`http://localhost:6333/collections`, {
+			method: 'GET',
+			signal: AbortSignal.timeout(2000)
+		});
+		return response.ok || response.status === 200;
+	} catch {
+		// Try root path as fallback
+		try {
+			const response = await fetch(`http://localhost:6333`, {
+				method: 'GET',
+				signal: AbortSignal.timeout(2000)
+			});
+			return response.status === 200;
+		} catch {}
+		return false;
+	}
+}
+
+async function isServiceRunning(port: number): Promise<boolean> {
 	try {
 		const response = await fetch(`http://localhost:${port}/health`, {
 			method: 'GET',
@@ -142,16 +163,6 @@ async function isPortOpen(port: number): Promise<boolean> {
 		});
 		return response.ok;
 	} catch {
-		// Try alternate endpoints for Qdrant
-		try {
-			if (port === 6333 || port === 6334) {
-				const response = await fetch(`http://localhost:${port}`, {
-					method: 'GET',
-					signal: AbortSignal.timeout(2000)
-				});
-				return response.ok;
-			}
-		} catch {}
 		return false;
 	}
 }
@@ -171,6 +182,13 @@ export async function startQdrant(log?: (msg: string) => void): Promise<void> {
 		throw new Error(`Qdrant binary not found. ${getInstallInstructions()}`);
 	}
 
+	// Ensure binary has execute permission
+	try {
+		fs.chmodSync(binaryPath, 0o755);
+	} catch (err) {
+		log?.(`Warning: Could not set execute permission on binary: ${err}`);
+	}
+
 	const dataDir = getDataDir();
 	const storagePath = path.join(dataDir, 'qdrant-storage');
 
@@ -178,15 +196,34 @@ export async function startQdrant(log?: (msg: string) => void): Promise<void> {
 		fs.mkdirSync(storagePath, { recursive: true });
 	}
 
+	// Generate Qdrant config file
+	const qdrantConfigPath = path.join(dataDir, 'qdrant-config.yaml');
+	const qdrantConfig = `# Qdrant configuration for MemClaw
+storage:
+  storage_path: ${storagePath}
+
+listeners:
+  http:
+    port: 6333
+  grpc:
+    port: 6334
+
+log_level: INFO
+`;
+
+	fs.writeFileSync(qdrantConfigPath, qdrantConfig, 'utf-8');
+
 	log?.(`Starting Qdrant with storage at ${storagePath}...`);
 	log?.(`Binary path: ${binaryPath}`);
+	log?.(`Config path: ${qdrantConfigPath}`);
 
 	const proc = spawn(
 		binaryPath,
-		['--storage-path', storagePath, '--http-port', '6333', '--grpc-port', '6334'],
+		['--config-path', qdrantConfigPath],
 		{
 			stdio: ['ignore', 'pipe', 'pipe'],
-			detached: true
+			detached: true,
+			cwd: dataDir  // Set working directory to data dir so Qdrant can write .qdrant-initialized
 		}
 	);
 
@@ -240,6 +277,13 @@ export async function startCortexMemService(log?: (msg: string) => void): Promis
 	const binaryPath = getBinaryPath('cortex-mem-service');
 	if (!binaryPath) {
 		throw new Error(`cortex-mem-service binary not found. ${getInstallInstructions()}`);
+	}
+
+	// Ensure binary has execute permission
+	try {
+		fs.chmodSync(binaryPath, 0o755);
+	} catch (err) {
+		log?.(`Warning: Could not set execute permission on binary: ${err}`);
 	}
 
 	const dataDir = getDataDir();

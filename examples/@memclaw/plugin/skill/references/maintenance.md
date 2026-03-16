@@ -1,42 +1,81 @@
 # Maintenance Guide
 
-MemClaw automatically maintains data health through scheduled tasks and provides tools for manual intervention when needed.
+Periodic maintenance commands for MemClaw data health.
 
-## Automatic Maintenance
+## CLI Tool Location
 
-**The plugin automatically registers a Cron Job that runs every 3 hours**, executing:
+The `cortex-mem-cli` tool is installed with the platform-specific binary package:
 
-| Command | Purpose |
-|---------|---------|
-| `vector prune` | Remove vectors whose source files no longer exist |
-| `vector reindex` | Rebuild vector index and remove stale entries |
-| `layers ensure-all` | Generate missing L0/L1 layer files |
+| Platform | CLI Path |
+|----------|----------|
+| macOS | `{claw-data-dir}/extensions/memclaw/node_modules/@memclaw/bin-darwin-arm64/bin/cortex-mem-cli` |
+| Windows | `{claw-data-dir}\extensions\memclaw\node_modules\@memclaw\bin-win-x64\bin\cortex-mem-cli.exe` |
 
-No manual setup required. The job is registered when the plugin starts.
+> **Note**: `{claw-data-dir}` is typically `~/.openclaw` for standard OpenClaw. Use your actual Claw data directory for custom versions.
 
-## Manual Maintenance Tool
+## Maintenance Commands
 
-Use `cortex_maintenance` tool to run maintenance on demand:
+All commands require `--config` and `--tenant` parameters:
 
-```json
-// Full maintenance
-{ "dryRun": false }
-
-// Preview changes without executing
-{ "dryRun": true }
-
-// Run specific commands only
-{ "commands": ["prune", "reindex"] }
+```bash
+cortex-mem-cli --config <config-path> --tenant tenant_claw <command>
 ```
 
-**When to run manually:**
-- Search results seem incomplete or stale
-- After recovering from a crash or data corruption
-- When disk space cleanup is needed
+Config file location:
+- macOS: `~/Library/Application Support/memclaw/config.toml`
+- Windows: `%LOCALAPPDATA%\memclaw\config.toml`
+
+### Vector Maintenance
+
+```bash
+# Remove dangling vectors (source files no longer exist)
+cortex-mem-cli --config config.toml --tenant tenant_claw vector prune
+
+# Preview without making changes
+cortex-mem-cli --config config.toml --tenant tenant_claw vector prune --dry-run
+
+# Rebuild vector index
+cortex-mem-cli --config config.toml --tenant tenant_claw vector reindex
+```
+
+### Layer Maintenance
+
+```bash
+# Generate missing L0/L1 layer files
+cortex-mem-cli --config config.toml --tenant tenant_claw layers ensure-all
+
+# Regenerate oversized abstracts
+cortex-mem-cli --config config.toml --tenant tenant_claw layers regenerate-oversized
+```
+
+## Scheduled Maintenance
+
+**You can set up a scheduled task in OpenClaw to run maintenance automatically:**
+
+### Option 1: OpenClaw Cron Job
+
+Create a Cron Job in OpenClaw that runs every 3 hours:
+
+1. **Schedule**: `0 */3 * * *`
+2. **Task**: Execute maintenance commands using the CLI tool
+3. **Commands**:
+   ```
+   cortex-mem-cli --config <config-path> --tenant tenant_claw vector prune
+   cortex-mem-cli --config <config-path> --tenant tenant_claw vector reindex
+   cortex-mem-cli --config <config-path> --tenant tenant_claw layers ensure-all
+   ```
+
+### Option 2: Manual Tool Invocation
+
+Use the `cortex_maintenance` tool for on-demand maintenance:
+
+```json
+{ "dryRun": false }
+```
 
 ## Diagnostic Commands
 
-### Check System Health
+### Check System Status
 
 ```bash
 cortex-mem-cli --config config.toml --tenant tenant_claw stats
@@ -48,15 +87,11 @@ cortex-mem-cli --config config.toml --tenant tenant_claw stats
 cortex-mem-cli --config config.toml --tenant tenant_claw layers status
 ```
 
-Shows how many directories have L0/L1 layers vs missing.
-
-### Check Vector Index Status
+### Check Vector Status
 
 ```bash
 cortex-mem-cli --config config.toml --tenant tenant_claw vector status
 ```
-
-Shows total vectors and stale entries.
 
 ## Quick Fix Flow
 
@@ -69,7 +104,7 @@ Shows total vectors and stale entries.
 
 | Issue | Solution |
 |-------|----------|
-| CLI not found | Ensure `@memclaw/bin-{platform}` is installed |
+| CLI not found | Check the binary path in `{claw-data-dir}/extensions/memclaw/node_modules/@memclaw/bin-{platform}/bin/` |
 | Connection refused | Check cortex-mem-service at `localhost:8085` |
 | Qdrant issues | Verify Qdrant at `localhost:6333` |
 | Layer generation fails | Check LLM API key in config.toml |
