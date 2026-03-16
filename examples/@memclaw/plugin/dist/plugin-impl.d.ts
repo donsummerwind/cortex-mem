@@ -12,13 +12,6 @@ interface PluginLogger {
     warn: (msg: string, ...args: unknown[]) => void;
     error: (msg: string, ...args: unknown[]) => void;
 }
-interface ToolDefinition {
-    name: string;
-    description: string;
-    parameters: object;
-    execute: (_id: string, params: Record<string, unknown>) => Promise<unknown>;
-    optional?: boolean;
-}
 interface PluginAPI {
     pluginConfig?: Record<string, unknown>;
     registerTool(tool: ToolDefinition, opts?: {
@@ -30,6 +23,13 @@ interface PluginAPI {
         stop: () => Promise<void>;
     }): void;
     logger: PluginLogger;
+}
+interface ToolDefinition {
+    name: string;
+    description: string;
+    parameters: object;
+    execute: (_id: string, params: Record<string, unknown>) => Promise<unknown>;
+    optional?: boolean;
 }
 export declare function createPlugin(api: PluginAPI): {
     id: string;

@@ -16,7 +16,7 @@
  *         "memclaw": {
  *           "enabled": true,
  *           "config": {
- *             "serviceUrl": "http://127.0.0.1:8085",
+ *             "serviceUrl": "http://localhost:8085",
  *             "tenantId": "tenant_claw",
  *             "autoStartServices": true
  *           }
@@ -68,7 +68,7 @@ export default function memclawPlugin(api: PluginAPI) {
 export const plugin = {
 	id: 'memclaw',
 	name: 'MemClaw',
-	version: '0.9.6',
+	version: '0.9.11',
 	configSchema: {
 		type: 'object',
 		properties: {

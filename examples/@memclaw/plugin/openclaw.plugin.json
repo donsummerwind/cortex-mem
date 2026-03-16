@@ -1,17 +1,18 @@
 {
 	"id": "memclaw",
 	"name": "MemClaw",
-	"version": "0.9.6",
+	"version": "0.9.11",
 	"description": "Layered semantic memory for OpenClaw with L0/L1/L2 tiered retrieval, easy setup, and migration from native memory",
 	"kind": "memory",
 	"skills": ["skill"],
+	"platforms": ["darwin-arm64", "win32-x64"],
 	"configSchema": {
 		"type": "object",
 		"properties": {
 			"serviceUrl": {
 				"type": "string",
 				"description": "Cortex Memory service URL",
-				"default": "http://127.0.0.1:8085"
+				"default": "http://localhost:8085"
 			},
 			"defaultSessionId": {
 				"type": "string",
@@ -51,6 +52,34 @@
 				"type": "integer",
 				"description": "cortex-mem-service port",
 				"default": 8085
+			},
+			"llmApiBaseUrl": {
+				"type": "string",
+				"description": "LLM API endpoint URL (OpenAI-compatible)",
+				"default": "https://api.openai.com/v1"
+			},
+			"llmApiKey": {
+				"type": "string",
+				"description": "LLM API key for memory extraction and summarization"
+			},
+			"llmModel": {
+				"type": "string",
+				"description": "LLM model name for memory processing",
+				"default": "gpt-5-mini"
+			},
+			"embeddingApiBaseUrl": {
+				"type": "string",
+				"description": "Embedding API endpoint URL (OpenAI-compatible)",
+				"default": "https://api.openai.com/v1"
+			},
+			"embeddingApiKey": {
+				"type": "string",
+				"description": "Embedding API key for vector generation"
+			},
+			"embeddingModel": {
+				"type": "string",
+				"description": "Embedding model name for vector search",
+				"default": "text-embedding-3-small"
 			}
 		},
 		"required": []
@@ -67,6 +96,32 @@
 		"autoStartServices": {
 			"label": "Auto-start Services",
 			"description": "Automatically start Qdrant and cortex-mem-service when plugin loads"
+		},
+		"llmApiBaseUrl": {
+			"label": "LLM API URL",
+			"description": "OpenAI-compatible LLM endpoint (e.g., https://api.openai.com/v1)"
+		},
+		"llmApiKey": {
+			"label": "LLM API Key",
+			"description": "API key for LLM service (required for memory processing)",
+			"sensitive": true
+		},
+		"llmModel": {
+			"label": "LLM Model",
+			"description": "Model name for memory extraction and summarization"
+		},
+		"embeddingApiBaseUrl": {
+			"label": "Embedding API URL",
+			"description": "OpenAI-compatible embedding endpoint"
+		},
+		"embeddingApiKey": {
+			"label": "Embedding API Key",
+			"description": "API key for embedding service (required for vector search)",
+			"sensitive": true
+		},
+		"embeddingModel": {
+			"label": "Embedding Model",
+			"description": "Model name for generating vector embeddings"
 		}
 	}
 }

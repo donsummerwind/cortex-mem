@@ -46,6 +46,8 @@ exports.ensureConfigExists = ensureConfigExists;
 exports.openConfigFile = openConfigFile;
 exports.parseConfig = parseConfig;
 exports.validateConfig = validateConfig;
+exports.updateConfigFromPlugin = updateConfigFromPlugin;
+exports.mergeConfigWithPlugin = mergeConfigWithPlugin;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
@@ -53,18 +55,18 @@ const child_process_1 = require("child_process");
 // Platform-specific paths
 function getDataDir() {
     const platform = process.platform;
-    if (platform === "win32") {
-        return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "memclaw");
+    if (platform === 'win32') {
+        return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'memclaw');
     }
-    else if (platform === "darwin") {
-        return path.join(os.homedir(), "Library", "Application Support", "memclaw");
+    else if (platform === 'darwin') {
+        return path.join(os.homedir(), 'Library', 'Application Support', 'memclaw');
     }
     else {
-        return path.join(os.homedir(), ".local", "share", "memclaw");
+        return path.join(os.homedir(), '.local', 'share', 'memclaw');
     }
 }
 function getConfigPath() {
-    return path.join(getDataDir(), "config.toml");
+    return path.join(getDataDir(), 'config.toml');
 }
 function generateConfigTemplate() {
     return `# MemClaw Configuration
@@ -84,7 +86,7 @@ api_base_url = "https://api.openai.com/v1"
 api_key = ""
 model_efficient = "gpt-5-mini"
 temperature = 0.1
-max_tokens = 4096
+max_tokens = 65536
 
 # Embedding Configuration [REQUIRED for vector search]
 [embedding]
@@ -118,7 +120,7 @@ function ensureConfigExists() {
     }
     if (!fs.existsSync(configPath)) {
         const template = generateConfigTemplate();
-        fs.writeFileSync(configPath, template, "utf-8");
+        fs.writeFileSync(configPath, template, 'utf-8');
         return { created: true, path: configPath };
     }
     return { created: false, path: configPath };
@@ -128,20 +130,20 @@ function openConfigFile(configPath) {
         const platform = process.platform;
         let command;
         let args = [];
-        if (platform === "win32") {
-            command = "cmd";
-            args = ["/c", "start", '""', configPath];
+        if (platform === 'win32') {
+            command = 'cmd';
+            args = ['/c', 'start', '""', configPath];
         }
-        else if (platform === "darwin") {
-            command = "open";
+        else if (platform === 'darwin') {
+            command = 'open';
             args = [configPath];
         }
         else {
-            command = "xdg-open";
+            command = 'xdg-open';
             args = [configPath];
         }
-        const proc = (0, child_process_1.spawn)(command, args, { detached: true, stdio: "ignore" });
-        proc.on("error", (err) => {
+        const proc = (0, child_process_1.spawn)(command, args, { detached: true, stdio: 'ignore' });
+        proc.on('error', (err) => {
             reject(err);
         });
         proc.unref();
@@ -149,13 +151,13 @@ function openConfigFile(configPath) {
     });
 }
 function parseConfig(configPath) {
-    const content = fs.readFileSync(configPath, "utf-8");
+    const content = fs.readFileSync(configPath, 'utf-8');
     const config = {};
-    let currentSection = "";
-    for (const line of content.split("\n")) {
+    let currentSection = '';
+    for (const line of content.split('\n')) {
         const trimmed = line.trim();
         // Skip comments and empty lines
-        if (trimmed.startsWith("#") || trimmed === "")
+        if (trimmed.startsWith('#') || trimmed === '')
             continue;
         // Section header
         const sectionMatch = trimmed.match(/^\[(\w+)\]$/);
@@ -172,9 +174,9 @@ function parseConfig(configPath) {
             const key = kvMatch[1];
             let value = kvMatch[2];
             // Convert to appropriate type
-            if (value === "true")
+            if (value === 'true')
                 value = true;
-            else if (value === "false")
+            else if (value === 'false')
                 value = false;
             else if (/^\d+$/.test(value))
                 value = parseInt(value, 10);
@@ -187,61 +189,154 @@ function parseConfig(configPath) {
     // Apply defaults
     return {
         qdrant: {
-            url: "http://localhost:6334",
-            collection_name: "memclaw",
+            url: 'http://localhost:6334',
+            collection_name: 'memclaw',
             timeout_secs: 30,
-            ...(config.qdrant || {}),
+            ...(config.qdrant || {})
         },
         llm: {
-            api_base_url: "https://api.openai.com/v1",
-            api_key: "",
-            model_efficient: "gpt-5-mini",
+            api_base_url: 'https://api.openai.com/v1',
+            api_key: '',
+            model_efficient: 'gpt-5-mini',
             temperature: 0.1,
             max_tokens: 4096,
-            ...(config.llm || {}),
+            ...(config.llm || {})
         },
         embedding: {
-            api_base_url: "https://api.openai.com/v1",
-            api_key: "",
-            model_name: "text-embedding-3-small",
+            api_base_url: 'https://api.openai.com/v1',
+            api_key: '',
+            model_name: 'text-embedding-3-small',
             batch_size: 10,
             timeout_secs: 30,
-            ...(config.embedding || {}),
+            ...(config.embedding || {})
         },
         server: {
-            host: "localhost",
+            host: 'localhost',
             port: 8085,
-            ...(config.server || {}),
+            ...(config.server || {})
         },
         logging: {
             enabled: false,
-            log_directory: "logs",
-            level: "info",
-            ...(config.logging || {}),
+            log_directory: 'logs',
+            level: 'info',
+            ...(config.logging || {})
         },
         cortex: {
             enable_intent_analysis: false,
-            ...(config.cortex || {}),
-        },
+            ...(config.cortex || {})
+        }
     };
 }
 function validateConfig(config) {
     const errors = [];
-    if (!config.llm.api_key || config.llm.api_key === "") {
-        errors.push("llm.api_key is required");
+    if (!config.llm.api_key || config.llm.api_key === '') {
+        errors.push('llm.api_key is required');
     }
-    if (!config.embedding.api_key || config.embedding.api_key === "") {
+    if (!config.embedding.api_key || config.embedding.api_key === '') {
         // Allow using llm.api_key for embedding if not specified
-        if (config.llm.api_key && config.llm.api_key !== "") {
+        if (config.llm.api_key && config.llm.api_key !== '') {
             config.embedding.api_key = config.llm.api_key;
         }
         else {
-            errors.push("embedding.api_key is required");
+            errors.push('embedding.api_key is required');
         }
     }
     return {
         valid: errors.length === 0,
-        errors,
+        errors
+    };
+}
+/**
+ * Update config.toml with values from OpenClaw plugin config
+ * Only updates fields that are provided (non-empty) in pluginConfig
+ */
+function updateConfigFromPlugin(pluginConfig) {
+    const configPath = getConfigPath();
+    // Ensure config file exists
+    ensureConfigExists();
+    // Parse existing config
+    const existingConfig = parseConfig(configPath);
+    // Track if any changes were made
+    let updated = false;
+    // Build updated config sections
+    const updates = [];
+    // LLM config updates
+    if (pluginConfig.llmApiKey && pluginConfig.llmApiKey !== '') {
+        updates.push({ section: 'llm', key: 'api_key', value: pluginConfig.llmApiKey });
+        updated = true;
+    }
+    if (pluginConfig.llmApiBaseUrl && pluginConfig.llmApiBaseUrl !== '') {
+        updates.push({ section: 'llm', key: 'api_base_url', value: pluginConfig.llmApiBaseUrl });
+        updated = true;
+    }
+    if (pluginConfig.llmModel && pluginConfig.llmModel !== '') {
+        updates.push({ section: 'llm', key: 'model_efficient', value: pluginConfig.llmModel });
+        updated = true;
+    }
+    // Embedding config updates
+    if (pluginConfig.embeddingApiKey && pluginConfig.embeddingApiKey !== '') {
+        updates.push({ section: 'embedding', key: 'api_key', value: pluginConfig.embeddingApiKey });
+        updated = true;
+    }
+    if (pluginConfig.embeddingApiBaseUrl && pluginConfig.embeddingApiBaseUrl !== '') {
+        updates.push({
+            section: 'embedding',
+            key: 'api_base_url',
+            value: pluginConfig.embeddingApiBaseUrl
+        });
+        updated = true;
+    }
+    if (pluginConfig.embeddingModel && pluginConfig.embeddingModel !== '') {
+        updates.push({ section: 'embedding', key: 'model_name', value: pluginConfig.embeddingModel });
+        updated = true;
+    }
+    if (!updated) {
+        return { updated: false, path: configPath };
+    }
+    // Read current content
+    let content = fs.readFileSync(configPath, 'utf-8');
+    // Apply each update
+    for (const { section, key, value } of updates) {
+        // Escape value for TOML string
+        const escapedValue = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        // Pattern to match the key in the correct section
+        // This handles both existing keys and missing keys
+        const sectionPattern = new RegExp(`(\\[${section}\\][^\\[]*?)(${key}\\s*=\\s*)"[^"]*"`, 's');
+        const keyExistsInSection = sectionPattern.test(content);
+        if (keyExistsInSection) {
+            // Update existing key
+            content = content.replace(sectionPattern, `$1$2"${escapedValue}"`);
+        }
+        else {
+            // Add key to section
+            const sectionStartPattern = new RegExp(`(\\[${section}\\]\\n)`, '');
+            if (sectionStartPattern.test(content)) {
+                content = content.replace(sectionStartPattern, `$1${key} = "${escapedValue}"\n`);
+            }
+        }
+    }
+    // Write updated content
+    fs.writeFileSync(configPath, content, 'utf-8');
+    return { updated: true, path: configPath };
+}
+/**
+ * Merge plugin config with file config, preferring plugin config values
+ */
+function mergeConfigWithPlugin(fileConfig, pluginConfig) {
+    return {
+        ...fileConfig,
+        llm: {
+            ...fileConfig.llm,
+            api_base_url: pluginConfig.llmApiBaseUrl || fileConfig.llm.api_base_url,
+            api_key: pluginConfig.llmApiKey || fileConfig.llm.api_key,
+            model_efficient: pluginConfig.llmModel || fileConfig.llm.model_efficient
+        },
+        embedding: {
+            ...fileConfig.embedding,
+            api_base_url: pluginConfig.embeddingApiBaseUrl || fileConfig.embedding.api_base_url,
+            api_key: pluginConfig.embeddingApiKey || fileConfig.embedding.api_key,
+            model_name: pluginConfig.embeddingModel || fileConfig.embedding.model_name
+        }
     };
 }
 //# sourceMappingURL=config.js.map

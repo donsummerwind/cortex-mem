@@ -7,7 +7,7 @@
  *
  * The correct package is installed automatically via optionalDependencies.
  */
-type SupportedPlatform = "darwin-arm64" | "win-x64";
+type SupportedPlatform = 'darwin-arm64' | 'win-x64';
 export declare function getPlatform(): SupportedPlatform | null;
 export declare function isPlatformSupported(): boolean;
 export declare function getUnsupportedPlatformMessage(): string;
@@ -25,5 +25,12 @@ export declare function startCortexMemService(log?: (msg: string) => void): Prom
 export declare function stopAllServices(): void;
 export declare function ensureAllServices(log?: (msg: string) => void): Promise<ServiceStatus>;
 export declare function getCliPath(): string | null;
+export interface CliResult {
+    success: boolean;
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+}
+export declare function executeCliCommand(args: string[], configPath: string, tenantId: string, timeout?: number): Promise<CliResult>;
 export {};
 //# sourceMappingURL=binaries.d.ts.map

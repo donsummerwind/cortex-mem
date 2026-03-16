@@ -172,7 +172,10 @@ impl MemoryExtractor {
             return Ok(ExtractedMemories::default());
         }
 
-        tracing::info!("Starting memory extraction from {} messages", messages.len());
+        tracing::info!(
+            "Starting memory extraction from {} messages",
+            messages.len()
+        );
 
         let prompt = self.build_extraction_prompt(messages);
         tracing::debug!("Memory extraction prompt length: {} chars", prompt.len());
@@ -229,11 +232,11 @@ impl MemoryExtractor {
    - "User is an INTJ personality type skilled in 蟒蛇 and 铁锈"
 
    ✅ CORRECT (English conversation):
-   - "User works at 快手 (Kuaishou) as a Rust engineer"
+   - "User works at SGNetworks as a Rust engineer"
    - "Cortex Memory is a long-term memory system for Agent"
 
    ❌ WRONG (English conversation):
-   - "用户 works at Kuaishou as a Rust 工程师"
+   - "用户 works at SGNetworks as a Rust 工程师"
    - "Cortex Memory is a 长期记忆 system for Agent"
 
 ## Instructions

@@ -55,6 +55,7 @@ exports.startCortexMemService = startCortexMemService;
 exports.stopAllServices = stopAllServices;
 exports.ensureAllServices = ensureAllServices;
 exports.getCliPath = getCliPath;
+exports.executeCliCommand = executeCliCommand;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const child_process_1 = require("child_process");
@@ -63,11 +64,11 @@ const config_js_1 = require("./config.js");
 function getPlatform() {
     const platform = process.platform;
     const arch = process.arch;
-    if (platform === "darwin" && arch === "arm64") {
-        return "darwin-arm64";
+    if (platform === 'darwin' && arch === 'arm64') {
+        return 'darwin-arm64';
     }
-    else if (platform === "win32" && arch === "x64") {
-        return "win-x64";
+    else if (platform === 'win32' && arch === 'x64') {
+        return 'win-x64';
     }
     return null;
 }
@@ -89,7 +90,7 @@ Current platform: ${platform}-${arch} is not supported.
 }
 // Get binary name with platform extension
 function getBinaryFileName(binary) {
-    return process.platform === "win32" ? `${binary}.exe` : binary;
+    return process.platform === 'win32' ? `${binary}.exe` : binary;
 }
 // Get the path to the platform-specific npm package
 function getPlatformPackagePath() {
@@ -114,7 +115,7 @@ function getBinaryPath(binary) {
         return null;
     }
     const binaryFileName = getBinaryFileName(binary);
-    const binaryPath = path.join(packagePath, "bin", binaryFileName);
+    const binaryPath = path.join(packagePath, 'bin', binaryFileName);
     if (fs.existsSync(binaryPath)) {
         return binaryPath;
     }
@@ -144,30 +145,41 @@ Or reinstall memclaw: npm install memclaw
 `;
 }
 async function checkServiceStatus() {
-    const qdrant = await isPortOpen(6333);
-    const cortexMemService = await isPortOpen(8085);
+    const qdrant = await isQdrantRunning();
+    const cortexMemService = await isServiceRunning(8085);
     return { qdrant, cortexMemService };
 }
-async function isPortOpen(port) {
+async function isQdrantRunning() {
+    // Qdrant uses root path or /collections for health check
     try {
-        const response = await fetch(`http://127.0.0.1:${port}/health`, {
-            method: "GET",
-            signal: AbortSignal.timeout(2000),
+        const response = await fetch(`http://localhost:6333/collections`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(2000)
+        });
+        return response.ok || response.status === 200;
+    }
+    catch {
+        // Try root path as fallback
+        try {
+            const response = await fetch(`http://localhost:6333`, {
+                method: 'GET',
+                signal: AbortSignal.timeout(2000)
+            });
+            return response.status === 200;
+        }
+        catch { }
+        return false;
+    }
+}
+async function isServiceRunning(port) {
+    try {
+        const response = await fetch(`http://localhost:${port}/health`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(2000)
         });
         return response.ok;
     }
     catch {
-        // Try alternate endpoints for Qdrant
-        try {
-            if (port === 6333 || port === 6334) {
-                const response = await fetch(`http://127.0.0.1:${port}`, {
-                    method: "GET",
-                    signal: AbortSignal.timeout(2000),
-                });
-                return response.ok;
-            }
-        }
-        catch { }
         return false;
     }
 }
@@ -176,82 +188,138 @@ const runningProcesses = new Map();
 async function startQdrant(log) {
     const status = await checkServiceStatus();
     if (status.qdrant) {
-        log?.("Qdrant is already running");
+        log?.('Qdrant is already running');
         return;
     }
-    const binaryPath = getBinaryPath("qdrant");
+    const binaryPath = getBinaryPath('qdrant');
     if (!binaryPath) {
         throw new Error(`Qdrant binary not found. ${getInstallInstructions()}`);
     }
+    // Ensure binary has execute permission
+    try {
+        fs.chmodSync(binaryPath, 0o755);
+    }
+    catch (err) {
+        log?.(`Warning: Could not set execute permission on binary: ${err}`);
+    }
     const dataDir = (0, config_js_1.getDataDir)();
-    const storagePath = path.join(dataDir, "qdrant-storage");
+    const storagePath = path.join(dataDir, 'qdrant-storage');
     if (!fs.existsSync(storagePath)) {
         fs.mkdirSync(storagePath, { recursive: true });
     }
+    // Generate Qdrant config file
+    const qdrantConfigPath = path.join(dataDir, 'qdrant-config.yaml');
+    const qdrantConfig = `# Qdrant configuration for MemClaw
+storage:
+  storage_path: ${storagePath}
+
+listeners:
+  http:
+    port: 6333
+  grpc:
+    port: 6334
+
+log_level: INFO
+`;
+    fs.writeFileSync(qdrantConfigPath, qdrantConfig, 'utf-8');
     log?.(`Starting Qdrant with storage at ${storagePath}...`);
-    const proc = (0, child_process_1.spawn)(binaryPath, [
-        "--storage-path",
-        storagePath,
-        "--http-port",
-        "6333",
-        "--grpc-port",
-        "6334",
-    ], {
-        stdio: ["ignore", "pipe", "pipe"],
+    log?.(`Binary path: ${binaryPath}`);
+    log?.(`Config path: ${qdrantConfigPath}`);
+    const proc = (0, child_process_1.spawn)(binaryPath, ['--config-path', qdrantConfigPath], {
+        stdio: ['ignore', 'pipe', 'pipe'],
         detached: true,
+        cwd: dataDir // Set working directory to data dir so Qdrant can write .qdrant-initialized
     });
-    proc.on("error", (err) => {
+    // Drain stdout/stderr to prevent buffer blocking
+    proc.stdout?.on('data', (data) => {
+        log?.(`[qdrant stdout] ${data.toString().trim()}`);
+    });
+    proc.stderr?.on('data', (data) => {
+        log?.(`[qdrant stderr] ${data.toString().trim()}`);
+    });
+    proc.on('error', (err) => {
         log?.(`Qdrant error: ${err.message}`);
     });
+    proc.on('exit', (code, signal) => {
+        if (code !== null && code !== 0) {
+            log?.(`Qdrant exited with code ${code}`);
+        }
+        if (signal) {
+            log?.(`Qdrant killed by signal ${signal}`);
+        }
+    });
     proc.unref();
-    runningProcesses.set("qdrant", proc);
+    runningProcesses.set('qdrant', proc);
     // Wait for Qdrant to start
     let retries = 30;
     while (retries > 0) {
         const status = await checkServiceStatus();
         if (status.qdrant) {
-            log?.("Qdrant started successfully");
+            log?.('Qdrant started successfully');
             return;
         }
         await new Promise((resolve) => setTimeout(resolve, 500));
         retries--;
     }
-    throw new Error("Qdrant failed to start within 15 seconds");
+    throw new Error('Qdrant failed to start within 15 seconds');
 }
 async function startCortexMemService(log) {
     const status = await checkServiceStatus();
     if (status.cortexMemService) {
-        log?.("cortex-mem-service is already running");
+        log?.('cortex-mem-service is already running');
         return;
     }
-    const binaryPath = getBinaryPath("cortex-mem-service");
+    const binaryPath = getBinaryPath('cortex-mem-service');
     if (!binaryPath) {
         throw new Error(`cortex-mem-service binary not found. ${getInstallInstructions()}`);
     }
+    // Ensure binary has execute permission
+    try {
+        fs.chmodSync(binaryPath, 0o755);
+    }
+    catch (err) {
+        log?.(`Warning: Could not set execute permission on binary: ${err}`);
+    }
     const dataDir = (0, config_js_1.getDataDir)();
     log?.(`Starting cortex-mem-service with data-dir ${dataDir}...`);
+    log?.(`Binary path: ${binaryPath}`);
     // cortex-mem-service automatically reads config.toml from --data-dir
-    const proc = (0, child_process_1.spawn)(binaryPath, ["--data-dir", dataDir], {
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: true,
+    const proc = (0, child_process_1.spawn)(binaryPath, ['--data-dir', dataDir], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true
     });
-    proc.on("error", (err) => {
+    // Drain stdout/stderr to prevent buffer blocking
+    proc.stdout?.on('data', (data) => {
+        log?.(`[cortex-mem-service stdout] ${data.toString().trim()}`);
+    });
+    proc.stderr?.on('data', (data) => {
+        log?.(`[cortex-mem-service stderr] ${data.toString().trim()}`);
+    });
+    proc.on('error', (err) => {
         log?.(`cortex-mem-service error: ${err.message}`);
     });
+    proc.on('exit', (code, signal) => {
+        if (code !== null && code !== 0) {
+            log?.(`cortex-mem-service exited with code ${code}`);
+        }
+        if (signal) {
+            log?.(`cortex-mem-service killed by signal ${signal}`);
+        }
+    });
     proc.unref();
-    runningProcesses.set("cortex-mem-service", proc);
+    runningProcesses.set('cortex-mem-service', proc);
     // Wait for service to start
     let retries = 30;
     while (retries > 0) {
         const status = await checkServiceStatus();
         if (status.cortexMemService) {
-            log?.("cortex-mem-service started successfully");
+            log?.('cortex-mem-service started successfully');
             return;
         }
         await new Promise((resolve) => setTimeout(resolve, 500));
         retries--;
     }
-    throw new Error("cortex-mem-service failed to start within 15 seconds");
+    throw new Error('cortex-mem-service failed to start within 15 seconds');
 }
 function stopAllServices() {
     for (const [name, proc] of runningProcesses) {
@@ -287,6 +355,62 @@ async function ensureAllServices(log) {
 }
 // Get CLI binary path for external commands (like migration)
 function getCliPath() {
-    return getBinaryPath("cortex-mem-cli");
+    return getBinaryPath('cortex-mem-cli');
+}
+async function executeCliCommand(args, configPath, tenantId, timeout = 120000) {
+    const cliPath = getCliPath();
+    if (!cliPath) {
+        return {
+            success: false,
+            stdout: '',
+            stderr: 'cortex-mem-cli binary not found',
+            exitCode: 1,
+        };
+    }
+    const fullArgs = [
+        '--config', configPath,
+        '--tenant', tenantId,
+        ...args
+    ];
+    return new Promise((resolve) => {
+        let stdout = '';
+        let stderr = '';
+        const proc = (0, child_process_1.spawn)(cliPath, fullArgs, {
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        proc.stdout?.on('data', (data) => {
+            stdout += data.toString();
+        });
+        proc.stderr?.on('data', (data) => {
+            stderr += data.toString();
+        });
+        const timer = setTimeout(() => {
+            proc.kill();
+            resolve({
+                success: false,
+                stdout,
+                stderr: stderr + '\nCommand timed out',
+                exitCode: null,
+            });
+        }, timeout);
+        proc.on('close', (code) => {
+            clearTimeout(timer);
+            resolve({
+                success: code === 0,
+                stdout,
+                stderr,
+                exitCode: code,
+            });
+        });
+        proc.on('error', (err) => {
+            clearTimeout(timer);
+            resolve({
+                success: false,
+                stdout,
+                stderr: err.message,
+                exitCode: 1,
+            });
+        });
+    });
 }
 //# sourceMappingURL=binaries.js.map

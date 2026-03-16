@@ -26,7 +26,7 @@ cargo build --release -p cortex-mem-service
 ./target/release/cortex-mem-service
 
 # 指定端口和数据目录
-./cortex-mem-service --port 3000 --data-dir /var/lib/cortex-data
+./cortex-mem-service --port 8085 --data-dir /var/lib/cortex-data
 ```
 
 ### Docker 部署
@@ -297,7 +297,7 @@ export RUST_LOG="cortex_service=debug"
 ```toml
 [server]
 host = "127.0.0.1"
-port = 8080
+port = 8085
 workers = 4
 max_connections = 1024
 
