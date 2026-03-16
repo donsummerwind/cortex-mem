@@ -50,4 +50,28 @@ export declare function validateConfig(config: MemClawConfig): {
     valid: boolean;
     errors: string[];
 };
+/**
+ * Configuration provided by OpenClaw plugin config
+ * These values will be synced to config.toml if provided
+ */
+export interface PluginProvidedConfig {
+    llmApiBaseUrl?: string;
+    llmApiKey?: string;
+    llmModel?: string;
+    embeddingApiBaseUrl?: string;
+    embeddingApiKey?: string;
+    embeddingModel?: string;
+}
+/**
+ * Update config.toml with values from OpenClaw plugin config
+ * Only updates fields that are provided (non-empty) in pluginConfig
+ */
+export declare function updateConfigFromPlugin(pluginConfig: PluginProvidedConfig): {
+    updated: boolean;
+    path: string;
+};
+/**
+ * Merge plugin config with file config, preferring plugin config values
+ */
+export declare function mergeConfigWithPlugin(fileConfig: MemClawConfig, pluginConfig: PluginProvidedConfig): MemClawConfig;
 //# sourceMappingURL=config.d.ts.map

@@ -265,3 +265,136 @@ export function validateConfig(config: MemClawConfig): {
     errors,
   };
 }
+
+/**
+ * Configuration provided by OpenClaw plugin config
+ * These values will be synced to config.toml if provided
+ */
+export interface PluginProvidedConfig {
+  llmApiBaseUrl?: string;
+  llmApiKey?: string;
+  llmModel?: string;
+  embeddingApiBaseUrl?: string;
+  embeddingApiKey?: string;
+  embeddingModel?: string;
+}
+
+/**
+ * Update config.toml with values from OpenClaw plugin config
+ * Only updates fields that are provided (non-empty) in pluginConfig
+ */
+export function updateConfigFromPlugin(
+  pluginConfig: PluginProvidedConfig,
+): { updated: boolean; path: string } {
+  const configPath = getConfigPath();
+
+  // Ensure config file exists
+  ensureConfigExists();
+
+  // Parse existing config
+  const existingConfig = parseConfig(configPath);
+
+  // Track if any changes were made
+  let updated = false;
+
+  // Build updated config sections
+  const updates: { section: string; key: string; value: string }[] = [];
+
+  // LLM config updates
+  if (pluginConfig.llmApiKey && pluginConfig.llmApiKey !== "") {
+    updates.push({ section: "llm", key: "api_key", value: pluginConfig.llmApiKey });
+    updated = true;
+  }
+  if (pluginConfig.llmApiBaseUrl && pluginConfig.llmApiBaseUrl !== "") {
+    updates.push({ section: "llm", key: "api_base_url", value: pluginConfig.llmApiBaseUrl });
+    updated = true;
+  }
+  if (pluginConfig.llmModel && pluginConfig.llmModel !== "") {
+    updates.push({ section: "llm", key: "model_efficient", value: pluginConfig.llmModel });
+    updated = true;
+  }
+
+  // Embedding config updates
+  if (pluginConfig.embeddingApiKey && pluginConfig.embeddingApiKey !== "") {
+    updates.push({ section: "embedding", key: "api_key", value: pluginConfig.embeddingApiKey });
+    updated = true;
+  }
+  if (pluginConfig.embeddingApiBaseUrl && pluginConfig.embeddingApiBaseUrl !== "") {
+    updates.push({ section: "embedding", key: "api_base_url", value: pluginConfig.embeddingApiBaseUrl });
+    updated = true;
+  }
+  if (pluginConfig.embeddingModel && pluginConfig.embeddingModel !== "") {
+    updates.push({ section: "embedding", key: "model_name", value: pluginConfig.embeddingModel });
+    updated = true;
+  }
+
+  if (!updated) {
+    return { updated: false, path: configPath };
+  }
+
+  // Read current content
+  let content = fs.readFileSync(configPath, "utf-8");
+
+  // Apply each update
+  for (const { section, key, value } of updates) {
+    // Escape value for TOML string
+    const escapedValue = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+    // Pattern to match the key in the correct section
+    // This handles both existing keys and missing keys
+    const sectionPattern = new RegExp(
+      `(\\[${section}\\][^\\[]*?)(${key}\\s*=\\s*)"[^"]*"`,
+      "s",
+    );
+    const keyExistsInSection = sectionPattern.test(content);
+
+    if (keyExistsInSection) {
+      // Update existing key
+      content = content.replace(
+        sectionPattern,
+        `$1$2"${escapedValue}"`,
+      );
+    } else {
+      // Add key to section
+      const sectionStartPattern = new RegExp(
+        `(\\[${section}\\]\\n)`,
+        "",
+      );
+      if (sectionStartPattern.test(content)) {
+        content = content.replace(
+          sectionStartPattern,
+          `$1${key} = "${escapedValue}"\n`,
+        );
+      }
+    }
+  }
+
+  // Write updated content
+  fs.writeFileSync(configPath, content, "utf-8");
+
+  return { updated: true, path: configPath };
+}
+
+/**
+ * Merge plugin config with file config, preferring plugin config values
+ */
+export function mergeConfigWithPlugin(
+  fileConfig: MemClawConfig,
+  pluginConfig: PluginProvidedConfig,
+): MemClawConfig {
+  return {
+    ...fileConfig,
+    llm: {
+      ...fileConfig.llm,
+      api_base_url: pluginConfig.llmApiBaseUrl || fileConfig.llm.api_base_url,
+      api_key: pluginConfig.llmApiKey || fileConfig.llm.api_key,
+      model_efficient: pluginConfig.llmModel || fileConfig.llm.model_efficient,
+    },
+    embedding: {
+      ...fileConfig.embedding,
+      api_base_url: pluginConfig.embeddingApiBaseUrl || fileConfig.embedding.api_base_url,
+      api_key: pluginConfig.embeddingApiKey || fileConfig.embedding.api_key,
+      model_name: pluginConfig.embeddingModel || fileConfig.embedding.model_name,
+    },
+  };
+}

@@ -46,6 +46,8 @@ exports.ensureConfigExists = ensureConfigExists;
 exports.openConfigFile = openConfigFile;
 exports.parseConfig = parseConfig;
 exports.validateConfig = validateConfig;
+exports.updateConfigFromPlugin = updateConfigFromPlugin;
+exports.mergeConfigWithPlugin = mergeConfigWithPlugin;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
@@ -242,6 +244,95 @@ function validateConfig(config) {
     return {
         valid: errors.length === 0,
         errors,
+    };
+}
+/**
+ * Update config.toml with values from OpenClaw plugin config
+ * Only updates fields that are provided (non-empty) in pluginConfig
+ */
+function updateConfigFromPlugin(pluginConfig) {
+    const configPath = getConfigPath();
+    // Ensure config file exists
+    ensureConfigExists();
+    // Parse existing config
+    const existingConfig = parseConfig(configPath);
+    // Track if any changes were made
+    let updated = false;
+    // Build updated config sections
+    const updates = [];
+    // LLM config updates
+    if (pluginConfig.llmApiKey && pluginConfig.llmApiKey !== "") {
+        updates.push({ section: "llm", key: "api_key", value: pluginConfig.llmApiKey });
+        updated = true;
+    }
+    if (pluginConfig.llmApiBaseUrl && pluginConfig.llmApiBaseUrl !== "") {
+        updates.push({ section: "llm", key: "api_base_url", value: pluginConfig.llmApiBaseUrl });
+        updated = true;
+    }
+    if (pluginConfig.llmModel && pluginConfig.llmModel !== "") {
+        updates.push({ section: "llm", key: "model_efficient", value: pluginConfig.llmModel });
+        updated = true;
+    }
+    // Embedding config updates
+    if (pluginConfig.embeddingApiKey && pluginConfig.embeddingApiKey !== "") {
+        updates.push({ section: "embedding", key: "api_key", value: pluginConfig.embeddingApiKey });
+        updated = true;
+    }
+    if (pluginConfig.embeddingApiBaseUrl && pluginConfig.embeddingApiBaseUrl !== "") {
+        updates.push({ section: "embedding", key: "api_base_url", value: pluginConfig.embeddingApiBaseUrl });
+        updated = true;
+    }
+    if (pluginConfig.embeddingModel && pluginConfig.embeddingModel !== "") {
+        updates.push({ section: "embedding", key: "model_name", value: pluginConfig.embeddingModel });
+        updated = true;
+    }
+    if (!updated) {
+        return { updated: false, path: configPath };
+    }
+    // Read current content
+    let content = fs.readFileSync(configPath, "utf-8");
+    // Apply each update
+    for (const { section, key, value } of updates) {
+        // Escape value for TOML string
+        const escapedValue = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        // Pattern to match the key in the correct section
+        // This handles both existing keys and missing keys
+        const sectionPattern = new RegExp(`(\\[${section}\\][^\\[]*?)(${key}\\s*=\\s*)"[^"]*"`, "s");
+        const keyExistsInSection = sectionPattern.test(content);
+        if (keyExistsInSection) {
+            // Update existing key
+            content = content.replace(sectionPattern, `$1$2"${escapedValue}"`);
+        }
+        else {
+            // Add key to section
+            const sectionStartPattern = new RegExp(`(\\[${section}\\]\\n)`, "");
+            if (sectionStartPattern.test(content)) {
+                content = content.replace(sectionStartPattern, `$1${key} = "${escapedValue}"\n`);
+            }
+        }
+    }
+    // Write updated content
+    fs.writeFileSync(configPath, content, "utf-8");
+    return { updated: true, path: configPath };
+}
+/**
+ * Merge plugin config with file config, preferring plugin config values
+ */
+function mergeConfigWithPlugin(fileConfig, pluginConfig) {
+    return {
+        ...fileConfig,
+        llm: {
+            ...fileConfig.llm,
+            api_base_url: pluginConfig.llmApiBaseUrl || fileConfig.llm.api_base_url,
+            api_key: pluginConfig.llmApiKey || fileConfig.llm.api_key,
+            model_efficient: pluginConfig.llmModel || fileConfig.llm.model_efficient,
+        },
+        embedding: {
+            ...fileConfig.embedding,
+            api_base_url: pluginConfig.embeddingApiBaseUrl || fileConfig.embedding.api_base_url,
+            api_key: pluginConfig.embeddingApiKey || fileConfig.embedding.api_key,
+            model_name: pluginConfig.embeddingModel || fileConfig.embedding.model_name,
+        },
     };
 }
 //# sourceMappingURL=config.js.map

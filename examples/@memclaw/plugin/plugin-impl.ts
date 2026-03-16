@@ -14,6 +14,9 @@ import {
   parseConfig,
   validateConfig,
   getDataDir,
+  updateConfigFromPlugin,
+  mergeConfigWithPlugin,
+  type PluginProvidedConfig,
 } from "./src/config.js";
 import {
   ensureAllServices,
@@ -32,6 +35,13 @@ interface PluginConfig {
   autoStartServices?: boolean;
   qdrantPort?: number;
   servicePort?: number;
+  // LLM/Embedding configuration (synced to config.toml)
+  llmApiBaseUrl?: string;
+  llmApiKey?: string;
+  llmModel?: string;
+  embeddingApiBaseUrl?: string;
+  embeddingApiKey?: string;
+  embeddingModel?: string;
 }
 
 // OpenClaw Plugin API types
@@ -270,6 +280,21 @@ export function createPlugin(api: PluginAPI) {
         return;
       }
 
+      // Sync plugin config to config.toml if LLM/Embedding settings provided
+      const pluginProvidedConfig: PluginProvidedConfig = {
+        llmApiBaseUrl: config.llmApiBaseUrl,
+        llmApiKey: config.llmApiKey,
+        llmModel: config.llmModel,
+        embeddingApiBaseUrl: config.embeddingApiBaseUrl,
+        embeddingApiKey: config.embeddingApiKey,
+        embeddingModel: config.embeddingModel,
+      };
+
+      const syncResult = updateConfigFromPlugin(pluginProvidedConfig);
+      if (syncResult.updated) {
+        log(`Synced LLM/Embedding config from OpenClaw to: ${syncResult.path}`);
+      }
+
       // Check if binaries are available
       const hasQdrant = isBinaryAvailable("qdrant");
       const hasService = isBinaryAvailable("cortex-mem-service");
@@ -281,15 +306,16 @@ export function createPlugin(api: PluginAPI) {
         );
       }
 
-      // Validate config
-      const parsedConfig = parseConfig(configPath);
-      const validation = validateConfig(parsedConfig);
+      // Parse and merge config (plugin config takes precedence)
+      const fileConfig = parseConfig(configPath);
+      const mergedConfig = mergeConfigWithPlugin(fileConfig, pluginProvidedConfig);
+      const validation = validateConfig(mergedConfig);
 
       if (!validation.valid) {
         api.logger.warn(
           `Configuration incomplete: ${validation.errors.join(", ")}`,
         );
-        api.logger.warn(`Please edit: ${configPath}`);
+        api.logger.warn(`Please configure LLM/Embedding API keys in OpenClaw plugin settings or edit: ${configPath}`);
         return;
       }
 

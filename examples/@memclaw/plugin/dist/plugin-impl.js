@@ -205,6 +205,19 @@ function createPlugin(api) {
                 log("Auto-start disabled, skipping service startup");
                 return;
             }
+            // Sync plugin config to config.toml if LLM/Embedding settings provided
+            const pluginProvidedConfig = {
+                llmApiBaseUrl: config.llmApiBaseUrl,
+                llmApiKey: config.llmApiKey,
+                llmModel: config.llmModel,
+                embeddingApiBaseUrl: config.embeddingApiBaseUrl,
+                embeddingApiKey: config.embeddingApiKey,
+                embeddingModel: config.embeddingModel,
+            };
+            const syncResult = (0, config_js_1.updateConfigFromPlugin)(pluginProvidedConfig);
+            if (syncResult.updated) {
+                log(`Synced LLM/Embedding config from OpenClaw to: ${syncResult.path}`);
+            }
             // Check if binaries are available
             const hasQdrant = (0, binaries_js_1.isBinaryAvailable)("qdrant");
             const hasService = (0, binaries_js_1.isBinaryAvailable)("cortex-mem-service");
@@ -212,12 +225,13 @@ function createPlugin(api) {
                 log("Some binaries are missing. Services may need manual setup.");
                 log(`Run 'memclaw setup' or check the admin skill for installation instructions.`);
             }
-            // Validate config
-            const parsedConfig = (0, config_js_1.parseConfig)(configPath);
-            const validation = (0, config_js_1.validateConfig)(parsedConfig);
+            // Parse and merge config (plugin config takes precedence)
+            const fileConfig = (0, config_js_1.parseConfig)(configPath);
+            const mergedConfig = (0, config_js_1.mergeConfigWithPlugin)(fileConfig, pluginProvidedConfig);
+            const validation = (0, config_js_1.validateConfig)(mergedConfig);
             if (!validation.valid) {
                 api.logger.warn(`Configuration incomplete: ${validation.errors.join(", ")}`);
-                api.logger.warn(`Please edit: ${configPath}`);
+                api.logger.warn(`Please configure LLM/Embedding API keys in OpenClaw plugin settings or edit: ${configPath}`);
                 return;
             }
             // Start services

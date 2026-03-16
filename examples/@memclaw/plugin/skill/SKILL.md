@@ -25,31 +25,60 @@ The search engine queries all three layers internally and returns unified result
 
 **IMPORTANT**: Before using MemClaw for the first time, you MUST ensure:
 
-1. **Qdrant** is running on port 6333/6334
-2. **cortex-mem-service** is running on port 8085 with `--data-dir`
-3. **LLM/Embedding API** is configured in `config.toml`
+1. **LLM/Embedding API** is configured (see Configuration below)
+2. Services will auto-start if `autoStartServices` is enabled (default)
+
+## Configuration
+
+### Recommended: Configure in OpenClaw Settings
+
+Configure LLM and Embedding API directly in OpenClaw plugin settings (`openclaw.json`):
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "memclaw": {
+        "enabled": true,
+        "config": {
+          "llmApiKey": "your-llm-api-key",
+          "llmApiBaseUrl": "https://api.openai.com/v1",
+          "llmModel": "gpt-4o-mini",
+          "embeddingApiKey": "your-embedding-api-key",
+          "embeddingApiBaseUrl": "https://api.openai.com/v1",
+          "embeddingModel": "text-embedding-3-small"
+        }
+      }
+    }
+  }
+}
+```
+
+**Configuration will be automatically synced to the service config file on startup.**
+
+### Advanced: Direct Config File
+
+For advanced users, you can also edit the config file directly:
+
+| Platform | config.toml Path |
+|----------|------------------|
+| macOS | `~/Library/Application Support/memclaw/config.toml` |
+| Windows | `%LOCALAPPDATA%\memclaw\config.toml` |
+| Linux | `~/.local/share/memclaw/config.toml` |
+
+> **See `references/setup.md`** for the complete configuration file template and service setup details.
 
 ## First-Time Setup (Agent Action Required)
 
 When MemClaw is used for the first time, **YOU MUST**:
 
-1. **Ask the user for LLM/Embedding configuration**:
-   - `llm.api_base_url` — LLM API endpoint (e.g., OpenAI-compatible provider)
-   - `llm.api_key` — LLM API key
-   - `embedding.api_base_url` — Embedding API endpoint
-   - `embedding.api_key` — Embedding API key
+1. **Check if LLM/Embedding API is configured** in OpenClaw plugin settings
+2. **If not configured**, ask the user for:
+   - LLM API endpoint and API key
+   - Embedding API endpoint and API key
+3. **Guide user to configure** in OpenClaw plugin settings (recommended) or help write the config file
 
-2. **Write the configuration file** to the platform-specific data directory:
-
-   | Platform | config.toml Path |
-   |----------|------------------|
-   | macOS | `~/Library/Application Support/memclaw/config.toml` |
-   | Windows | `%LOCALAPPDATA%\memclaw\config.toml` |
-   | Linux | `~/.local/share/memclaw/config.toml` |
-
-3. **Use the full configuration template** from `references/setup.md`
-
-> **See `references/setup.md`** for the complete configuration file template and service setup details.
+The configuration will be automatically synced when OpenClaw restarts.
 
 ## Decision Flow
 
@@ -91,12 +120,19 @@ When MemClaw is used for the first time, **YOU MUST**:
 
 | Issue | Solution |
 |-------|----------|
-| Services won't start | Check ports 6333, 6334, 8085; verify `api_key` in config.toml |
+| Services won't start | Check ports 6333, 6334, 8085; verify API keys in OpenClaw plugin settings |
 | Search returns no results | Run `cortex_list_sessions` to verify; lower `min_score` threshold |
 | Migration fails | Ensure OpenClaw workspace at `~/.openclaw/workspace` |
-| cortex-mem-service fails | Ensure `--data-dir` is set and `config.toml` exists in that directory |
-| LLM/Embedding errors | Verify `llm.api_key` and `embedding.api_key` are configured in `config.toml` |
+| cortex-mem-service fails | Check logs; verify config.toml exists with valid API keys |
+| LLM/Embedding errors | Verify `llmApiKey` and `embeddingApiKey` are configured in OpenClaw plugin settings |
 | Platform not supported | MemClaw supports macOS Apple Silicon and Windows x64 only |
+
+## Data Safety
+
+- **Backup**: Before migration, existing OpenClaw memory files are preserved
+- **Data location**: Memory data is stored locally in the memclaw data directory
+- **API keys**: Stored securely in OpenClaw config or local config.toml file
+- **No cloud sync**: All data remains on your local machine
 
 ## References
 
