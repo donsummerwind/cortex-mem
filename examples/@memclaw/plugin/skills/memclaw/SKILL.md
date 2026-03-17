@@ -34,12 +34,7 @@ The search engine queries all three tiers internally and returns unified results
 
 ## Configuration
 
-All configuration is managed through OpenClaw plugin settings. To view or modify:
-
-1. Open OpenClaw settings (`openclaw.json` or via UI)
-2. Navigate to Plugins → MemClaw → Configuration
-3. Verify or update the required fields
-4. Save changes and **restart OpenClaw Gateway** for changes to take effect
+All configuration is managed through OpenClaw plugin settings. However, when the plugin is first used, incomplete configuration items may cause it to fail. If the plugin or tools cannot be used, proactively inform the user and assist in completing the necessary configurations. For details, refer to the 'Troubleshooting' section below.
 
 ## Usage Guide
 
@@ -88,11 +83,12 @@ Open OpenClaw settings and verify MemClaw plugin configuration:
 
 1. Open `openclaw.json` or navigate to Settings → Plugins → MemClaw
 2. Ensure all required fields are correctly filled, especially the configuration sections related to LLM and Embedding.
-3. Save the configuration file
+3. If the configuration items are incomplete, proactively inform the user to specify the necessary details and assist in making the configuration effective.
+4. Save changes and **restart OpenClaw Gateway** for changes to take effect
 
 ### Step 2: Restart OpenClaw Gateway
 
-After making configuration changes, **you MUST restart OpenClaw Gateway** for the changes to take effect.
+After making configuration changes and saved, **you MUST restart OpenClaw Gateway** for the changes to take effect.
 
 ### Step 3: Verify Services
 
@@ -105,6 +101,14 @@ If issues persist after restart:
 | No search results | Run `cortex_list_sessions` to verify; lower `min_score` threshold; ensure memories have been stored |
 | Service connection errors | Verify `serviceUrl` is correct; check if services are running |
 | LLM/Embedding errors | Verify API URLs and credentials in plugin configuration; restart OpenClaw Gateway after changes |
+
+Check that Qdrant and cortex-mem-service are accessible:
+> Note: MemClaw does not require users to install any Docker environment. All dependencies are prepared during the openclaw's memclaw plugin installation.
+
+| Service | Port | Health Check |
+|---------|------|--------------|
+| Qdrant | 6333 (HTTP), 6334 (gRPC) | HTTP GET to `http://localhost:6333` should return Qdrant version info |
+| cortex-mem-service | 8085 | HTTP GET to `http://localhost:8085/health` should return `{"status":"ok"}` |
 
 ## References
 

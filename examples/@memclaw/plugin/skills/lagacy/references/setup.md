@@ -145,6 +145,7 @@ timeout_secs = 30
 [server]
 host = "localhost"
 port = 8085
+cors_origins = ["*"]
 
 # Logging Configuration
 [logging]
@@ -173,11 +174,6 @@ Check that Qdrant and cortex-mem-service are accessible:
 **Starting Qdrant:**
 
 If `autoStartServices` is `true` in plugin config, MemClaw will start Qdrant automatically.
-
-To start manually, run the Qdrant binary from the platform package with:
-- `--storage-path` pointing to a storage directory
-- `--http-port 6333`
-- `--grpc-port 6334`
 
 **Starting cortex-mem-service:**
 

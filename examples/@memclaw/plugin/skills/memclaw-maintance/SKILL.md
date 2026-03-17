@@ -105,6 +105,15 @@ Restart OpenClaw to activate the plugin and start services.
 
 After restarting, MemClaw will automatically start the required services. If configured correctly, you should be able to use the memory tools normally.
 
+Check that Qdrant and cortex-mem-service are accessible:
+
+> Note: MemClaw does not require users to install any Docker environment. All dependencies are prepared during the openclaw's memclaw plugin installation.
+
+| Service | Port | Health Check |
+|---------|------|--------------|
+| Qdrant | 6333 (HTTP), 6334 (gRPC) | HTTP GET to `http://localhost:6333` should return Qdrant version info |
+| cortex-mem-service | 8085 | HTTP GET to `http://localhost:8085/health` should return `{"status":"ok"}` |
+
 ### Migrate Existing Memories (Optional)
 
 If the user has existing OpenClaw native memories, call the `cortex_migrate` tool to migrate them to MemClaw:
