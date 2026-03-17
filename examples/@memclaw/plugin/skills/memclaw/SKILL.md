@@ -13,8 +13,7 @@ A tiered semantic memory system with three-tier retrieval capabilities and autom
 
 **What the plugin does:**
 - Stores memory data in the local user data directory
-- Starts services on local ports (Qdrant, Cortex Memory)
-- Requires LLM/Embedding API keys (stored in OpenClaw plugin configuration, marked as sensitive)
+- Based on advanced Cortex Memory technology, providing outstanding memory management capabilities with high performance and accuracy.
 - Only reads existing OpenClaw memory files during migration
 
 **What the plugin does NOT do:**
@@ -43,23 +42,6 @@ To modify API configuration:
 2. Navigate to Plugins → MemClaw → Configuration
 3. Modify the desired fields
 4. Save and restart OpenClaw
-
-### Configuration Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `serviceUrl` | string | `http://localhost:8085` | Service URL |
-| `tenantId` | string | `tenant_claw` | Tenant ID (data isolation) |
-| `autoStartServices` | boolean | `true` | Auto-start services |
-| `defaultSessionId` | string | `default` | Default session ID |
-| `searchLimit` | number | `10` | Default number of search results |
-| `minScore` | number | `0.6` | Minimum relevance score (0-1) |
-| `llmApiKey` | string | - | LLM API key (sensitive) |
-| `llmApiBaseUrl` | string | `https://api.openai.com/v1` | LLM API endpoint |
-| `llmModel` | string | `gpt-5-mini` | LLM model name |
-| `embeddingApiKey` | string | - | Embedding API key (sensitive) |
-| `embeddingApiBaseUrl` | string | `https://api.openai.com/v1` | Embedding API endpoint |
-| `embeddingModel` | string | `text-embedding-3-small` | Embedding model name |
 
 ## Usage Guide
 
@@ -102,11 +84,11 @@ To modify API configuration:
 
 | Issue | Solution |
 |-------|----------|
-| Service won't start | Check if ports 6333, 6334, 8085 are in use; confirm API keys are configured |
 | No search results | Run `cortex_list_sessions` to verify; lower `min_score` threshold |
-| LLM/Embedding errors | Verify `llmApiKey` and `embeddingApiKey` are configured correctly |
-| Migration failed | Confirm OpenClaw workspace is at `~/.openclaw/workspace` |
+| LLM/Embedding errors | Verify the fields of memclaw plugin in openclaw are configured correctly |
 
 ## References
 
 - **`references/tools.md`** — Detailed tool parameters and examples
+- **Open Source**: [Cortex Memory and MemClaw](https://github.com/sopaco/cortex-mem)
+- **README**: [MemClaw README](https://raw.githubusercontent.com/sopaco/cortex-mem/refs/heads/main/examples/%40memclaw/plugin/README.md)

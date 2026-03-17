@@ -1,6 +1,6 @@
 {
 	"name": "@memclaw/memclaw",
-	"version": "0.9.13",
+	"version": "0.9.15",
 	"description": "MemClaw - The Cortex Memory plugin for OpenClaw. Layered semantic memory for OpenClaw with easy setup and migration",
 	"homepage": "https://github.com/sopaco/cortex-mem",
 	"repository": {
@@ -36,7 +36,8 @@
 			"dist/index.js"
 		],
 		"skills": [
-			"skills/memclaw"
+			"skills/memclaw",
+			"skills/memclaw-maintance"
 		]
 	},
 	"devDependencies": {

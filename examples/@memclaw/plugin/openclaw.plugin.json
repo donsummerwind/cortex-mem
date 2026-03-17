@@ -1,10 +1,10 @@
 {
 	"id": "memclaw",
 	"name": "MemClaw",
-	"version": "0.9.13",
+	"version": "0.9.15",
 	"description": "Layered semantic memory for OpenClaw with L0/L1/L2 tiered retrieval, easy setup, and migration from native memory",
 	"kind": "memory",
-	"skills": ["skills/memclaw"],
+	"skills": ["skills/memclaw", "skills/memclaw-maintance"],
 	"platforms": ["darwin-arm64", "win32-x64"],
 	"osRestriction": ["darwin-arm64", "win32-x64"],
 	"configSchema": {
@@ -85,14 +85,7 @@
 				"default": "text-embedding-3-small"
 			}
 		},
-		"required": [
-			"llmApiKey",
-			"embeddingApiKey",
-			"llmApiBaseUrl",
-			"llmModel",
-			"embeddingApiBaseUrl",
-			"embeddingModel"
-		]
+		"required": []
 	},
 	"uiHints": {
 		"serviceUrl": {

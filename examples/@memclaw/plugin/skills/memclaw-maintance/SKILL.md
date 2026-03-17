@@ -1,6 +1,6 @@
 ---
-name: memclaw-setup
-description: MemClaw Setup Guide — Installation and configuration guidance for users without the @memclaw/memclaw plugin installed. After completing installation, use the `memclaw` skill for daily usage help.
+name: memclaw-maintance
+description: MemClaw Maintance Guide — Installation and configuration guidance for users especially without the @memclaw/memclaw plugin installed. For normal use cases, use the `memclaw` skill for daily usage help.
 ---
 
 # MemClaw Setup Guide
@@ -35,7 +35,7 @@ The search engine queries all three tiers internally and returns unified results
 
 ## Installation Steps
 
-### Step 1: Install the Plugin
+### Step 1: Install the Plugin (for users without the @memclaw/memclaw plugin)
 
 Execute the following command to install the plugin:
 
@@ -43,12 +43,7 @@ Execute the following command to install the plugin:
 openclaw plugins install @memclaw/memclaw
 ```
 
-The installation process will:
-- Download the plugin from the package registry (npm, clawhub)
-- Automatically install platform-specific binary dependencies
-- Register the plugin in OpenClaw
-
-### Step 1: Enable the Plugin
+### Step 2: Enable the Plugin
 
 Enable MemClaw in `openclaw.json`:
 
@@ -143,3 +138,5 @@ After installation, use the following decision flow for memory operations:
 
 - **`references/tools.md`** — Detailed tool parameters and examples
 - **`references/troubleshooting.md`** — Common troubleshooting issues
+- **Open Source**: [Cortex Memory and MemClaw](https://github.com/sopaco/cortex-mem)
+- **README**: [MemClaw README](https://raw.githubusercontent.com/sopaco/cortex-mem/refs/heads/main/examples/%40memclaw/plugin/README.md)
