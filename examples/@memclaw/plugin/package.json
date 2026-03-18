@@ -5,7 +5,7 @@
 	"homepage": "https://github.com/sopaco/cortex-mem",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/sopaco/cortex-mem.git",
+		"url": "git+https://github.com/sopaco/cortex-mem.git",
 		"directory": "examples/@memclaw/plugin"
 	},
 	"bugs": {
