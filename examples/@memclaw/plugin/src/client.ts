@@ -276,10 +276,9 @@ export class CortexMemClient {
 			success: boolean;
 			data?: string;
 			error?: string;
-		}>('/api/v2/sessions/message', {
+		}>(`/api/v2/sessions/${threadId}/messages`, {
 			method: 'POST',
 			body: JSON.stringify({
-				thread_id: threadId,
 				role: message.role ?? 'user',
 				content: message.content,
 				metadata: message.metadata
@@ -309,9 +308,9 @@ export class CortexMemClient {
 				message_count: number;
 			};
 			error?: string;
-		}>('/api/v2/sessions/close', {
+		}>(`/api/v2/sessions/${threadId}/close`, {
 			method: 'POST',
-			body: JSON.stringify({ thread_id: threadId })
+			body: JSON.stringify({})
 		});
 
 		if (!response.success || !response.data) {

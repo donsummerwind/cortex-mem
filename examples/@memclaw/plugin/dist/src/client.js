@@ -128,10 +128,9 @@ class CortexMemClient {
      * Add a message to a session
      */
     async addMessage(threadId, message) {
-        const response = await this.fetchJson('/api/v2/sessions/message', {
+        const response = await this.fetchJson(`/api/v2/sessions/${threadId}/messages`, {
             method: 'POST',
             body: JSON.stringify({
-                thread_id: threadId,
                 role: message.role ?? 'user',
                 content: message.content,
                 metadata: message.metadata
@@ -146,9 +145,9 @@ class CortexMemClient {
      * Close a session and trigger memory extraction
      */
     async closeSession(threadId) {
-        const response = await this.fetchJson('/api/v2/sessions/close', {
+        const response = await this.fetchJson(`/api/v2/sessions/${threadId}/close`, {
             method: 'POST',
-            body: JSON.stringify({ thread_id: threadId })
+            body: JSON.stringify({})
         });
         if (!response.success || !response.data) {
             throw new Error(response.error ?? 'Close session failed');
