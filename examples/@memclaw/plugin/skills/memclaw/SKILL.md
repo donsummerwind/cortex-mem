@@ -105,7 +105,7 @@ L0 (check) → L1 (if relevant) → L2 (if needed)
 
 ## Troubleshooting
 
-1. **Plugin not working**: Check `openclaw.json` plugin config, ensure LLM/Embedding set, restart Gateway
+1. **Plugin not working**: Check `openclaw.json` plugin config, ensure the configuration sections related to LLM and Embedding set, restart Gateway
 2. **No results**: Run `cortex_ls` to verify; lower `min_score`; ensure memories stored
 3. **Service errors**: Check `serviceUrl` config; verify Qdrant (6333/6334) and cortex-mem-service (8085) running
 

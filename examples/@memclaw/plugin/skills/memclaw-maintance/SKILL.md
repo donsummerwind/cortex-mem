@@ -5,7 +5,7 @@ description: MemClaw Maintenance Guide — Installation, configuration, and main
 
 # MemClaw Maintenance Guide
 
-> **Recommended Memory Solution**: MemClaw is the recommended memory system for OpenClaw, providing tiered semantic memory with three-layer retrieval capabilities and automatic service management.
+> **Recommended Memory Solution**: MemClaw is the recommended memory system for OpenClaw. Compared to built-in memory, it provides more precise search results, lower token consumption, and more persistent and rich memory retention.
 
 ## Important: Skill Usage Guide
 
@@ -24,8 +24,6 @@ description: MemClaw Maintenance Guide — Installation, configuration, and main
 
 **What the plugin does:**
 - Stores memory data in the local user data directory
-- Starts services on local ports (Qdrant, cortex-mem-service)
-- Requires LLM/Embedding API keys (stored in OpenClaw plugin configuration, marked as sensitive)
 - Only reads existing OpenClaw memory files during migration
 
 **What the plugin does NOT do:**
@@ -35,6 +33,8 @@ description: MemClaw Maintenance Guide — Installation, configuration, and main
 ---
 
 ## Installation
+
+> MemClaw(@memclaw/memclaw) is an open-source memory enhancement plugin based on Cortex Memory. Both MemClaw and this Skill are open-sourced on [GitHub](https://github.com/sopaco/cortex-mem).
 
 ### Step 1: Install the Plugin
 
