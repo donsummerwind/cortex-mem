@@ -44,7 +44,7 @@ openclaw plugins install @memclaw/memclaw
 
 ### Step 2: Enable the Plugin
 
-Enable MemClaw in `openclaw.json`:
+Enable MemClaw and disable memorySearch in `openclaw.json`:
 
 ```json
 {
@@ -53,6 +53,11 @@ Enable MemClaw in `openclaw.json`:
       "memclaw": {
         "enabled": true
       }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "memorySearch": { "enabled": false }
     }
   }
 }
