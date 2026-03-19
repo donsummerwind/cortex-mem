@@ -64,11 +64,23 @@ impl ConfigManager {
 
         // 加载或创建 cortex-mem 配置
         let cortex_config = if cortex_config_file.exists() {
-            let config =
+            let mut config =
                 CortexConfig::load(&cortex_config_file).context("无法加载 cortex-mem 配置")?;
+            
+            // 如果 data_dir 未设置（配置文件中缺少此项），强制使用应用数据目录
+            // 这是 TARS 演示程序的规则：记忆文件必须存储在系统应用数据目录
+            let needs_save = config.cortex.data_dir.is_none();
+            if needs_save {
+                config.cortex.data_dir = Some(tars_data_dir_str.clone());
+                let content = toml::to_string_pretty(&config).context("无法序列化配置")?;
+                fs::write(&cortex_config_file, content).context("无法更新配置文件")?;
+                log::info!("已补充 data_dir 配置: {:?}", tars_data_dir_str);
+            }
+            
             log::info!(
-                "已加载配置: embedding_dim={:?}",
-                config.qdrant.embedding_dim
+                "已加载配置: embedding_dim={:?}, data_dir={:?}",
+                config.qdrant.embedding_dim,
+                config.cortex.data_dir
             );
             config
         } else {
