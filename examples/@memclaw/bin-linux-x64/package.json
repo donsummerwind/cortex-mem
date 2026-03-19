@@ -1,6 +1,6 @@
 {
 	"name": "@memclaw/bin-linux-x64",
-	"version": "0.1.0",
+	"version": "0.1.5",
 	"description": "MemClaw binaries for Linux x64",
 	"publishConfig": {
 		"access": "public"
