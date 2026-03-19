@@ -38,7 +38,6 @@ OpenClaw + MemClaw Plugin
          ├── cortex_search    → 搜索记忆
          ├── cortex_recall    → 召回上下文
          ├── cortex_add_memory → 存储记忆
-         ├── cortex_list_sessions → 列出会话
          ├── cortex_close_session → 关闭并提取
          └── cortex_migrate   → 迁移现有记忆
                     │
@@ -218,10 +217,6 @@ ln -sf "$(pwd)" ~/.openclaw/extensions/memclaw
 }
 ```
 
-### cortex_list_sessions
-
-列出所有记忆会话及其状态和消息数量。
-
 ### cortex_close_session
 
 关闭会话并触发记忆提取管道（耗时 30-60 秒）。
@@ -258,21 +253,11 @@ ln -sf "$(pwd)" ~/.openclaw/extensions/memclaw
 
 ### 插件无法工作
 
-1. **检查配置**：打开 OpenClaw 设置，验证 MemClaw 插件配置，特别是 LLM 和 Embedding 设置
-2. **重启 OpenClaw Gateway**：配置更改需要重启网关才能生效
-3. **验证服务**：运行 `cortex_list_sessions` 检查服务是否响应
-
 ### 服务无法启动
 
 1. 检查端口 6333、6334、8085 是否可用
 2. 验证 LLM 和 Embedding 凭证是否正确配置
 3. 运行 `openclaw skills` 检查插件状态
-
-### 搜索无结果
-
-1. 运行 `cortex_list_sessions` 验证会话是否存在
-2. 降低 `min_score` 阈值（默认：0.6）
-3. 确保已存储记忆（运行 `cortex_close_session` 提取记忆）
 
 ### 迁移失败
 

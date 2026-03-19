@@ -38,7 +38,6 @@ OpenClaw + MemClaw Plugin
          ├── cortex_search    → Search memories
          ├── cortex_recall    → Recall with context
          ├── cortex_add_memory → Store memories
-         ├── cortex_list_sessions → List sessions
          ├── cortex_close_session → Close & extract
          └── cortex_migrate   → Migrate existing memory
                     │
@@ -218,9 +217,7 @@ Store a message for future retrieval.
 }
 ```
 
-### cortex_list_sessions
 
-List all memory sessions with status and message count.
 
 ### cortex_close_session
 
@@ -258,21 +255,11 @@ For detailed guidance on tool selection, session lifecycle, and best practices, 
 
 ### Plugin Not Working
 
-1. **Check Configuration**: Open OpenClaw settings and verify MemClaw plugin configuration, especially LLM and Embedding settings
-2. **Restart OpenClaw Gateway**: Configuration changes require a gateway restart to take effect
-3. **Verify Services**: Run `cortex_list_sessions` to check if the service is responding
-
 ### Services Won't Start
 
 1. Check that ports 6333, 6334, 8085 are available
 2. Verify LLM and Embedding credentials are configured correctly
 3. Run `openclaw skills` to check plugin status
-
-### Search Returns No Results
-
-1. Run `cortex_list_sessions` to verify sessions exist
-2. Lower `min_score` threshold (default: 0.6)
-3. Ensure memories have been stored (run `cortex_close_session` to extract memories)
 
 ### Migration Fails
 

@@ -67,16 +67,6 @@ Open OpenClaw settings and verify MemClaw plugin configuration:
 
 ## Usage Issues
 
-### No Search Results
-
-**Symptoms**: `cortex_search` returns empty results
-
-**Solutions**:
-1. Run `cortex_list_sessions` to verify sessions exist
-2. Lower `min_score` threshold (e.g., from 0.6 to 0.4)
-3. Try different query terms or synonyms
-4. Confirm that `cortex_add_memory` or `cortex_close_session` has been called previously to store memories
-
 ### Memory Extraction Failed
 
 **Symptoms**: `cortex_close_session` fails or produces incomplete results

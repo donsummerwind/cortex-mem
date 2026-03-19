@@ -21,9 +21,10 @@ MemClaw provides OpenClaw with a powerful memory system that goes beyond simple 
 
 See [security.md](./references/security.md) for details on data handling, storage locations, and API key security.
 
-## Configuration
+## Prerequisites & Configuration
+1. This skill provides instructions for using the OpenClaw plugin @memclaw/memclaw. If the user has not installed this, **you must** proactively and promptly inform the user to install it via `openclaw plugins install @memclaw/memclaw`.
 
-All configuration is managed through OpenClaw plugin settings. However, when the plugin is first used, incomplete configuration items may cause it to fail. If the plugin or tools cannot be used, proactively inform the user and assist in completing the necessary configurations. For details, refer to the 'Troubleshooting' section below.
+2. All configuration is managed through OpenClaw plugin settings. However, when the plugin is first used, incomplete configuration items may cause it to fail. If the plugin or tools cannot be used, proactively inform the user and assist in completing the necessary configurations. For details, refer to the 'Troubleshooting' section below.
 
 ## Tool Selection Guide
 
@@ -240,7 +241,7 @@ If issues persist after restart:
 
 | Issue | Solution |
 |-------|----------|
-| No search results | Run `cortex_list_sessions` to verify; lower `min_score` threshold; ensure memories have been stored |
+| No search results | Run `cortex_ls` to verify; lower `min_score` threshold; ensure memories have been stored |
 | Service connection errors | Verify `serviceUrl` is correct; check if services are running |
 | LLM/Embedding errors | Verify API URLs and credentials in plugin configuration; restart OpenClaw Gateway after changes |
 
@@ -264,5 +265,5 @@ See [memory-structure.md](./references/memory-structure.md) for complete documen
 
 - [tools.md](./references/tools.md) - Detailed tool documentation
 - [best-practices.md](./references/best-practices.md) - Advanced patterns
-- [security.md](./references/security.md) - Security and trust information
 - [memory-structure.md](./references/memory-structure.md) - Complete memory structure documentation
+- [security.md](./references/security.md) - Security and trust information
