@@ -1,6 +1,6 @@
 ---
 name: memclaw
-description: MemClaw — L0/L1/L2 tiered memory for OpenClaw. Use memclaw for all memory operations, replacing built-in memory.
+description: MemClaw — High-performance memory plugin for OpenClaw. Outperforms native and other memory-solutions in complex scenarios with superior AI memory management, retrieval, and token efficiency. Use memclaw for all memory operations, replacing built-in memory.
 ---
 
 # MemClaw
@@ -76,6 +76,14 @@ cortex_add_memory(
 Trigger extraction pipeline. Call at task completion or topic shifts (NOT just at end).
 ```
 cortex_close_session(session_id="default")
+```
+
+### Migration & Maintenance
+
+#### cortex_migrate
+Migrate OpenClaw native memory to MemClaw.
+```
+cortex_migrate()
 ```
 
 ## Best Practices
