@@ -1,7 +1,9 @@
 use axum::{Router, routing::get};
 use clap::Parser;
+use std::fs::File;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{info, level_filters::LevelFilter};
@@ -35,6 +37,10 @@ struct Cli {
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
+
+    /// Log file path. When specified, logs will be written to both file and stdout
+    #[arg(long, value_name = "PATH")]
+    log_file: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -48,14 +54,41 @@ async fn main() -> anyhow::Result<()> {
         LevelFilter::INFO
     };
 
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_target(false)
-                .with_level(true),
-        )
-        .with(log_level)
-        .init();
+    // Setup logging layers
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_target(false)
+        .with_level(true);
+
+    if let Some(ref log_path) = cli.log_file {
+        // Ensure parent directory exists
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Create log file
+        let log_file = File::create(log_path)?;
+        let file_writer = Mutex::new(log_file);
+
+        // File layer (no colors, includes target for debugging)
+        let file_layer = tracing_subscriber::fmt::layer()
+            .with_target(true)
+            .with_level(true)
+            .with_ansi(false)
+            .with_writer(file_writer);
+
+        tracing_subscriber::registry()
+            .with(stdout_layer)
+            .with(file_layer)
+            .with(log_level)
+            .init();
+
+        info!("Logging to file: {}", log_path.display());
+    } else {
+        tracing_subscriber::registry()
+            .with(stdout_layer)
+            .with(log_level)
+            .init();
+    }
 
     info!("Starting Cortex Memory Service");
     info!("Data directory: {}", cli.data_dir);

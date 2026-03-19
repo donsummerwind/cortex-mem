@@ -281,11 +281,16 @@ async function startCortexMemService(log) {
         log?.(`Warning: Could not set execute permission on binary: ${err}`);
     }
     const dataDir = (0, config_js_1.getDataDir)();
+    // Prepare log file path
+    const logsDir = path.join(dataDir, 'logs');
+    fs.mkdirSync(logsDir, { recursive: true });
+    const logFilePath = path.join(logsDir, 'memclaw-cortex-mem-service.log');
     log?.(`Starting cortex-mem-service with data-dir ${dataDir}...`);
     log?.(`Binary path: ${binaryPath}`);
+    log?.(`Log file: ${logFilePath}`);
     // cortex-mem-service reads config.toml from current working directory
     // Set cwd to dataDir so it can find the config file
-    const proc = (0, child_process_1.spawn)(binaryPath, ['--data-dir', dataDir], {
+    const proc = (0, child_process_1.spawn)(binaryPath, ['--data-dir', dataDir, '--log-file', logFilePath], {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: true,
         cwd: dataDir // Set working directory so config.toml can be found

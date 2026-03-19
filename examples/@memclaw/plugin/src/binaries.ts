@@ -288,12 +288,18 @@ export async function startCortexMemService(log?: (msg: string) => void): Promis
 
 	const dataDir = getDataDir();
 
+	// Prepare log file path
+	const logsDir = path.join(dataDir, 'logs');
+	fs.mkdirSync(logsDir, { recursive: true });
+	const logFilePath = path.join(logsDir, 'memclaw-cortex-mem-service.log');
+
 	log?.(`Starting cortex-mem-service with data-dir ${dataDir}...`);
 	log?.(`Binary path: ${binaryPath}`);
+	log?.(`Log file: ${logFilePath}`);
 
 	// cortex-mem-service reads config.toml from current working directory
 	// Set cwd to dataDir so it can find the config file
-	const proc = spawn(binaryPath, ['--data-dir', dataDir], {
+	const proc = spawn(binaryPath, ['--data-dir', dataDir, '--log-file', logFilePath], {
 		stdio: ['ignore', 'pipe', 'pipe'],
 		detached: true,
 		cwd: dataDir  // Set working directory so config.toml can be found
