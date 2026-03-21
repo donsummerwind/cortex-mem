@@ -44,6 +44,7 @@ MemClaw uses platform-specific binary packages distributed via npm:
 |---------|----------|----------|
 | `@memclaw/bin-darwin-arm64` | macOS Apple Silicon | Qdrant, cortex-mem-service, cortex-mem-cli |
 | `@memclaw/bin-win-x64` | Windows x64 | Qdrant, cortex-mem-service, cortex-mem-cli |
+| `@memclaw/bin-linux-x64` | Linux x64 | Qdrant, cortex-mem-service, cortex-mem-cli |
 
 ### Verification
 
@@ -53,6 +54,7 @@ To verify binary packages:
 # Check package integrity via npm
 npm view @memclaw/bin-darwin-arm64
 npm view @memclaw/bin-win-x64
+npm view @memclaw/bin-linux-x64
 
 # Inspect package contents
 npm pack @memclaw/bin-darwin-arm64
