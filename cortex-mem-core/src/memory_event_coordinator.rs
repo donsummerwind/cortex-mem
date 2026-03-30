@@ -1105,9 +1105,10 @@ Return ONLY the JSON object. No additional text before or after."#,
             match found {
                 Some((start, end)) => response[start..=end].to_string(),
                 None => {
+                    let preview: String = response.chars().take(500).collect();
                     warn!(
                         "LLM response contains no JSON object. Response preview: {}",
-                        &response[..response.len().min(500)]
+                        preview
                     );
                     return ExtractedMemories::default();
                 }
@@ -1117,10 +1118,11 @@ Return ONLY the JSON object. No additional text before or after."#,
         match serde_json::from_str::<ExtractedMemories>(&json_str) {
             Ok(memories) => memories,
             Err(e) => {
+                let preview: String = json_str.chars().take(1000).collect();
                 warn!(
                     "Failed to parse LLM extraction response: {}. JSON preview: {}",
                     e,
-                    &json_str[..json_str.len().min(1000)]
+                    preview
                 );
                 ExtractedMemories::default()
             }
