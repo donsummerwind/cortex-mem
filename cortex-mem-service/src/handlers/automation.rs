@@ -35,7 +35,8 @@ pub async fn trigger_extraction(
 
     // Close the session — this sends a SessionClosed event to MemoryEventCoordinator which
     // handles memory extraction, L0/L1 generation and vector sync asynchronously.
-    let mut session_mgr = state.session_manager.write().await;
+    let session_mgr = state.current_session_manager().await;
+    let mut session_mgr = session_mgr.write().await;
     session_mgr.close_session(&thread_id).await?;
 
     let response = serde_json::json!({
@@ -43,6 +44,55 @@ pub async fn trigger_extraction(
         "status": "extraction_triggered",
         "message": "Session closed. Memory extraction and L0/L1 generation are being processed \
                     asynchronously by MemoryEventCoordinator.",
+    });
+
+    Ok(Json(ApiResponse::success(response)))
+}
+
+/// Trigger a full reindex of all memories for the current tenant.
+///
+/// This scans all files in user/agent/session scopes and indexes any that are missing
+/// from the vector store. Useful after 429 rate limit failures during initial ingest.
+pub async fn trigger_reindex(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ApiResponse<serde_json::Value>>> {
+    let cortex = state.cortex.read().await.clone();
+
+    let Some(qdrant_store) = cortex.qdrant_store() else {
+        return Err(AppError::Internal("Vector store not available".to_string()));
+    };
+    let Some(embedding_client) = cortex.embedding() else {
+        return Err(AppError::Internal(
+            "Embedding client not available".to_string(),
+        ));
+    };
+
+    let filesystem = cortex.filesystem();
+
+    use cortex_mem_core::VectorSyncManager;
+
+    let sync_manager = VectorSyncManager::new(filesystem, embedding_client, qdrant_store);
+
+    // Run full sync in background to avoid timeout
+    tokio::spawn(async move {
+        match sync_manager.sync_all().await {
+            Ok(stats) => {
+                tracing::info!(
+                    indexed = stats.indexed,
+                    skipped = stats.skipped,
+                    errors = stats.errors,
+                    "Reindex completed"
+                );
+            }
+            Err(e) => {
+                tracing::error!("Reindex failed: {}", e);
+            }
+        }
+    });
+
+    let response = serde_json::json!({
+        "status": "reindex_triggered",
+        "message": "Full reindex started in background. Check service logs for progress.",
     });
 
     Ok(Json(ApiResponse::success(response)))

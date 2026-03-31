@@ -57,6 +57,42 @@ pub struct SessionResponse {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Close-and-wait request
+#[derive(Debug, Deserialize)]
+pub struct CloseAndWaitRequest {
+    /// Maximum seconds to wait for extraction + indexing readiness.
+    #[serde(default = "default_close_wait_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Poll interval in milliseconds.
+    #[serde(default = "default_close_wait_poll_interval_ms")]
+    pub poll_interval_ms: u64,
+}
+
+fn default_close_wait_timeout_secs() -> u64 {
+    120
+}
+
+fn default_close_wait_poll_interval_ms() -> u64 {
+    500
+}
+
+/// Close-and-wait response
+#[derive(Debug, Serialize)]
+pub struct CloseAndWaitResponse {
+    pub thread_id: String,
+    pub status: String,
+    pub user_id: String,
+    pub agent_id: String,
+    pub waited_ms: u64,
+    pub user_index_exists: bool,
+    pub user_memory_count: usize,
+    pub session_summary_exists: bool,
+    pub session_summary_memory_count: usize,
+    pub vector_sync_confirmed: bool,
+    pub timeline_abstract_exists: bool,
+    pub timeline_overview_exists: bool,
+}
+
 /// Message request
 #[derive(Debug, Deserialize)]
 pub struct AddMessageRequest {

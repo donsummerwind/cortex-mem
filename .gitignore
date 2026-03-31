@@ -11,5 +11,6 @@ __Litho_Summary_Detail__.md
 whisper-ggml.bin
 
 /.cortex
+cortex-data
 /rcproj
 /rcsurvey

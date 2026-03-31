@@ -77,7 +77,7 @@ impl MemoryOperations {
     }
 
     /// Normalize scope parameter to ensure it's a valid cortex URI
-    fn normalize_scope(scope: Option<&str>) -> String {
+    pub fn normalize_scope(scope: Option<&str>) -> String {
         match scope {
             None => "cortex://session".to_string(),
             Some(s) => {

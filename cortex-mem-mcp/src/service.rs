@@ -1,8 +1,8 @@
-use cortex_mem_core::{FilesystemOperations, SearchOptions};
 use cortex_mem_tools::MemoryOperations;
+use cortex_mem_tools::types::{ExploreArgs, LsArgs, SearchArgs};
 use rmcp::{
-    handler::server::tool::ToolRouter, handler::server::wrapper::Parameters, model::*, tool,
-    tool_handler, tool_router, Json, ServerHandler,
+    handler::server::tool::ToolRouter, handler::server::wrapper::Parameters, model::*,
+    tool, tool_handler, tool_router, Json, ServerHandler,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -65,170 +65,228 @@ impl Default for SessionState {
 
 // ==================== Tool Arguments & Results ====================
 
+// Store Tool
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct StoreMemoryArgs {
+pub struct StoreArgs {
     /// Content to store
-    content: String,
+    pub content: String,
     /// Thread/session ID (optional, defaults to "default")
-    thread_id: Option<String>,
+    pub thread_id: Option<String>,
     /// Message role: "user", "assistant", or "system"
-    role: Option<String>,
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct StoreMemoryResult {
-    success: bool,
-    uri: String,
-    message_id: String,
+pub struct StoreResult {
+    pub success: bool,
+    pub uri: String,
+    pub message_id: String,
 }
 
+// Search Tool
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct QueryMemoryArgs {
+pub struct SearchArgsMcp {
     /// Search query
-    query: String,
+    pub query: String,
     /// Thread ID to search in (optional)
-    thread_id: Option<String>,
+    pub scope: Option<String>,
     /// Maximum number of results (default: 10)
-    limit: Option<usize>,
-    /// Search scope: "session", "user", "agent" (default: "session")
-    scope: Option<String>,
+    pub limit: Option<usize>,
+    /// Minimum relevance score (0-1, default: 0.5)
+    pub min_score: Option<f32>,
+    /// Which layers to return: ["L0"] (default), ["L0","L1"], ["L0","L1","L2"]
+    pub return_layers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct QueryMemoryResult {
-    success: bool,
-    query: String,
-    results: Vec<SearchResultItem>,
-    total: usize,
+pub struct SearchResultMcp {
+    pub uri: String,
+    pub score: f32,
+    pub snippet: String,
+    pub overview: Option<String>,
+    pub content: Option<String>,
+    pub layers: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct SearchResultItem {
-    uri: String,
-    score: f32,
-    snippet: String,
+pub struct SearchResultMcpList {
+    pub success: bool,
+    pub query: String,
+    pub results: Vec<SearchResultMcp>,
+    pub total: usize,
 }
 
+// Recall Tool
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ListMemoriesArgs {
+pub struct RecallArgs {
+    /// The search query
+    pub query: String,
+    /// Optional session/thread ID to limit search scope
+    pub scope: Option<String>,
+    /// Maximum number of results (default: 10)
+    pub limit: Option<usize>,
+}
+
+// Ls Tool
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct LsArgsMcp {
     /// URI to list (e.g., "cortex://session" or "cortex://user/preferences")
-    uri: Option<String>,
-    /// Maximum number of results (default: 50)
-    limit: Option<usize>,
+    pub uri: Option<String>,
+    /// Whether to recursively list subdirectories
+    pub recursive: Option<bool>,
     /// Include abstracts in results
-    include_abstracts: Option<bool>,
+    pub include_abstracts: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ListMemoriesResult {
-    success: bool,
-    uri: String,
-    entries: Vec<ListEntry>,
-    total: usize,
+pub struct LsEntryMcp {
+    pub name: String,
+    pub uri: String,
+    pub is_directory: bool,
+    pub size: Option<usize>,
+    pub abstract_text: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ListEntry {
-    name: String,
-    uri: String,
-    is_directory: bool,
-    size: Option<usize>,
-    abstract_text: Option<String>,
+pub struct LsResult {
+    pub success: bool,
+    pub uri: String,
+    pub entries: Vec<LsEntryMcp>,
+    pub total: usize,
+}
+
+// Explore Tool
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ExploreArgsMcp {
+    /// Exploration query - what to look for
+    pub query: String,
+    /// Starting URI for exploration
+    pub start_uri: Option<String>,
+    /// Which layers to return in matches
+    pub return_layers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct GetMemoryArgs {
+pub struct ExplorationPathItemMcp {
+    pub uri: String,
+    pub relevance_score: f32,
+    pub abstract_text: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ExploreResult {
+    pub success: bool,
+    pub query: String,
+    pub exploration_path: Vec<ExplorationPathItemMcp>,
+    pub matches: Vec<SearchResultMcp>,
+    pub total_explored: usize,
+    pub total_matches: usize,
+}
+
+// Tiered Access Tools
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct AbstractArgs {
+    /// URI of the memory
+    pub uri: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct AbstractResult {
+    pub success: bool,
+    pub uri: String,
+    pub abstract_text: String,
+    pub layer: String,
+    pub token_count: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct OverviewArgs {
+    /// URI of the memory
+    pub uri: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct OverviewResult {
+    pub success: bool,
+    pub uri: String,
+    pub overview_text: String,
+    pub layer: String,
+    pub token_count: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ContentArgs {
     /// URI of the memory to retrieve
-    uri: String,
+    pub uri: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct GetMemoryResult {
-    success: bool,
-    uri: String,
-    content: String,
+pub struct ContentResult {
+    pub success: bool,
+    pub uri: String,
+    pub content: String,
+    pub layer: String,
+    pub token_count: usize,
 }
 
+// Delete Tool
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct DeleteMemoryArgs {
+pub struct DeleteArgs {
     /// URI of the memory to delete
-    uri: String,
+    pub uri: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct DeleteMemoryResult {
-    success: bool,
-    uri: String,
+pub struct DeleteResult {
+    pub success: bool,
+    pub uri: String,
+}
+
+// Commit Tool
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct CommitArgs {
+    /// Thread/session ID to commit
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct GetAbstractArgs {
-    /// URI of the memory
-    uri: String,
+pub struct CommitResult {
+    pub success: bool,
+    pub thread_id: String,
+    pub message: String,
 }
 
+// Layers Tool
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct GetAbstractResult {
-    success: bool,
-    uri: String,
-    abstract_text: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct GetOverviewArgs {
-    /// URI of the memory
-    uri: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct GetOverviewResult {
-    success: bool,
-    uri: String,
-    overview_text: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct GenerateLayersArgs {
+pub struct LayersArgs {
     /// Thread/session ID (optional, if not provided, generates for all sessions)
-    thread_id: Option<String>,
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct GenerateLayersResult {
-    success: bool,
-    message: String,
-    total: usize,
-    generated: usize,
-    failed: usize,
+pub struct LayersResult {
+    pub success: bool,
+    pub message: String,
+    pub total: usize,
+    pub generated: usize,
+    pub failed: usize,
 }
 
+// Index Tool
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct IndexMemoriesArgs {
+pub struct IndexArgs {
     /// Thread/session ID (optional, if not provided, indexes all files)
-    thread_id: Option<String>,
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct IndexMemoriesResult {
-    success: bool,
-    message: String,
-    total_files: usize,
-    indexed_files: usize,
-    skipped_files: usize,
-    error_files: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct CloseSessionArgs {
-    /// Thread/session ID to close
-    thread_id: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct CloseSessionResult {
-    success: bool,
-    thread_id: String,
-    message: String,
+pub struct IndexResult {
+    pub success: bool,
+    pub message: String,
+    pub total_files: usize,
+    pub indexed_files: usize,
+    pub skipped_files: usize,
+    pub error_files: usize,
 }
 
 // ==================== MCP Service ====================
@@ -240,7 +298,7 @@ pub struct CloseSessionResult {
 ///
 /// ## Auto-Trigger Mechanism
 ///
-/// When `store_memory` is called, the service checks:
+/// When `store` is called, the service checks:
 /// 1. Message count threshold (default: 10 messages)
 /// 2. Inactivity timeout (default: 2 minutes without new messages)
 ///
@@ -276,9 +334,6 @@ impl MemoryMcpService {
     }
 
     /// Check if auto-trigger conditions are met and send SessionClosed event
-    ///
-    /// This leverages the existing MemoryEventCoordinator infrastructure,
-    /// which handles memory extraction, layer generation, and vector indexing.
     async fn check_and_trigger_processing(&self, thread_id: &str) -> bool {
         if !self.auto_trigger_config.enable_auto_trigger {
             return false;
@@ -306,13 +361,9 @@ impl MemoryMcpService {
             self.last_global_process.store(now_ts, Ordering::Relaxed);
 
             // Send SessionClosed event to MemoryEventCoordinator
-            // This triggers the full processing pipeline:
-            // 1. Memory extraction (session → user/agent)
-            // 2. Timeline L0/L1 generation
-            // 3. Vector sync
             if let Some(tx) = self.operations.memory_event_tx() {
                 use cortex_mem_core::memory_events::MemoryEvent;
-                
+
                 let user_id = self.operations.default_user_id().to_string();
                 let agent_id = self.operations.default_agent_id().to_string();
 
@@ -323,11 +374,11 @@ impl MemoryMcpService {
                 });
 
                 info!(
-                    "🚀 Auto-triggered SessionClosed event for session {} (will process in background)",
+                    "Auto-triggered SessionClosed event for session {} (will process in background)",
                     thread_id
                 );
             } else {
-                warn!("⚠️ memory_event_tx not available, cannot auto-trigger processing");
+                warn!("memory_event_tx not available, cannot auto-trigger processing");
             }
 
             return true;
@@ -354,7 +405,7 @@ impl MemoryMcpService {
                 }
             }
             info!(
-                "🎯 Auto-trigger: message count {} >= threshold {}",
+                "Auto-trigger: message count {} >= threshold {}",
                 state.message_count, config.message_count_threshold
             );
             return true;
@@ -364,14 +415,13 @@ impl MemoryMcpService {
     }
 
     /// Start a background task to check for inactive sessions
-    /// This triggers processing when sessions become inactive
     pub fn start_inactivity_checker(&self) {
         let session_states = self.session_states.clone();
         let operations = self.operations.clone();
         let config = self.auto_trigger_config;
 
         tokio::spawn(async move {
-            let check_interval = std::time::Duration::from_secs(30); // Check every 30 seconds
+            let check_interval = std::time::Duration::from_secs(30);
             let mut interval = tokio::time::interval(check_interval);
 
             loop {
@@ -385,12 +435,10 @@ impl MemoryMcpService {
                 let mut to_process = Vec::new();
 
                 for (thread_id, state) in states.iter_mut() {
-                    // Check inactivity timeout
                     let inactive_duration = state.last_message.elapsed().as_secs();
 
                     if inactive_duration >= config.inactivity_timeout_secs && state.message_count > 0
                     {
-                        // Check minimum interval since last processing
                         let can_process = if let Some(last_processed) = state.last_processed {
                             last_processed.elapsed().as_secs() >= config.min_process_interval_secs
                         } else {
@@ -399,7 +447,7 @@ impl MemoryMcpService {
 
                         if can_process {
                             info!(
-                                "⏰ Session {} inactive for {}s, triggering processing",
+                                "Session {} inactive for {}s, triggering processing",
                                 thread_id, inactive_duration
                             );
                             to_process.push(thread_id.clone());
@@ -407,16 +455,14 @@ impl MemoryMcpService {
                     }
                 }
 
-                // Process inactive sessions
                 for thread_id in to_process {
                     if let Some(state) = states.get_mut(&thread_id) {
                         state.message_count = 0;
                         state.last_processed = Some(Instant::now());
 
-                        // Send SessionClosed event
                         if let Some(tx) = operations.memory_event_tx() {
                             use cortex_mem_core::memory_events::MemoryEvent;
-                            
+
                             let user_id = operations.default_user_id().to_string();
                             let agent_id = operations.default_agent_id().to_string();
 
@@ -431,15 +477,113 @@ impl MemoryMcpService {
             }
         });
 
-        info!("⏱️ Session inactivity checker started");
+        info!("Session inactivity checker started");
     }
 
-    #[tool(description = "Store a new memory in the cortex memory system")]
-    async fn store_memory(
+    // ==================== Search Tools ====================
+
+    #[tool(description = "Layered semantic search across memory using L0/L1/L2 tiered retrieval")]
+    async fn search(
         &self,
-        params: Parameters<StoreMemoryArgs>,
-    ) -> std::result::Result<Json<StoreMemoryResult>, String> {
-        debug!("store_memory called with args: {:?}", params.0);
+        params: Parameters<SearchArgsMcp>,
+    ) -> std::result::Result<Json<SearchResultMcpList>, String> {
+        debug!("search called with args: {:?}", params.0);
+
+        let limit = params.0.limit.unwrap_or(10);
+        let _min_score = params.0.min_score.unwrap_or(0.5);
+        let return_layers = params.0.return_layers.unwrap_or_else(|| vec!["L0".to_string()]);
+
+        let search_args = SearchArgs {
+            query: params.0.query.clone(),
+            recursive: Some(true),
+            return_layers: Some(return_layers.clone()),
+            scope: params.0.scope.clone(),
+            limit: Some(limit),
+        };
+
+        match self.operations.search(search_args).await {
+            Ok(response) => {
+                let results: Vec<SearchResultMcp> = response
+                    .results
+                    .into_iter()
+                    .map(|r| SearchResultMcp {
+                        uri: r.uri,
+                        score: r.score,
+                        snippet: r.abstract_text.clone().unwrap_or_default(),
+                        overview: r.overview_text,
+                        content: r.content,
+                        layers: return_layers.clone(),
+                    })
+                    .collect();
+
+                let total = results.len();
+                info!("Search '{}' found {} results", params.0.query, total);
+
+                Ok(Json(SearchResultMcpList {
+                    success: true,
+                    query: params.0.query,
+                    results,
+                    total,
+                }))
+            }
+            Err(e) => {
+                error!("Search failed: {}", e);
+                Err(format!("Search failed: {}", e))
+            }
+        }
+    }
+
+    #[tool(description = "Recall memories with full context (L0 snippet + L2 content)")]
+    async fn recall(
+        &self,
+        params: Parameters<RecallArgs>,
+    ) -> std::result::Result<Json<SearchResultMcpList>, String> {
+        debug!("recall called with args: {:?}", params.0);
+
+        match self
+            .operations
+            .recall(&params.0.query, params.0.scope.as_deref(), params.0.limit)
+            .await
+        {
+            Ok(response) => {
+                let results: Vec<SearchResultMcp> = response
+                    .results
+                    .into_iter()
+                    .map(|r| SearchResultMcp {
+                        uri: r.uri,
+                        score: r.score,
+                        snippet: r.abstract_text.clone().unwrap_or_default(),
+                        overview: r.overview_text,
+                        content: r.content,
+                        layers: vec!["L0".to_string(), "L2".to_string()],
+                    })
+                    .collect();
+
+                let total = results.len();
+                info!("Recall '{}' found {} results", params.0.query, total);
+
+                Ok(Json(SearchResultMcpList {
+                    success: true,
+                    query: params.0.query,
+                    results,
+                    total,
+                }))
+            }
+            Err(e) => {
+                error!("Recall failed: {}", e);
+                Err(format!("Recall failed: {}", e))
+            }
+        }
+    }
+
+    // ==================== Storage Tools ====================
+
+    #[tool(description = "Add a message to memory for a specific session")]
+    async fn store(
+        &self,
+        params: Parameters<StoreArgs>,
+    ) -> std::result::Result<Json<StoreResult>, String> {
+        debug!("store called with args: {:?}", params.0);
 
         let thread_id = params.0.thread_id.unwrap_or_else(|| "default".to_string());
         let role = params.0.role.as_deref().unwrap_or("user");
@@ -450,7 +594,6 @@ impl MemoryMcpService {
             .await
         {
             Ok(message_uri) => {
-                // Extract message_id from URI (last segment without extension)
                 let message_id = message_uri
                     .rsplit('/')
                     .next()
@@ -460,13 +603,12 @@ impl MemoryMcpService {
 
                 info!("Memory stored at: {}", message_uri);
 
-                // 🔧 Auto-trigger: Check if processing should be triggered
                 let triggered = self.check_and_trigger_processing(&thread_id).await;
                 if triggered {
-                    info!("🚀 Auto-triggered memory processing for thread {}", thread_id);
+                    info!("Auto-triggered memory processing for thread {}", thread_id);
                 }
 
-                Ok(Json(StoreMemoryResult {
+                Ok(Json(StoreResult {
                     success: true,
                     uri: message_uri,
                     message_id,
@@ -479,165 +621,234 @@ impl MemoryMcpService {
         }
     }
 
-    #[tool(description = "Search memories using semantic vector search")]
-    async fn query_memory(
+    #[tool(description = "Commit accumulated conversation content and trigger memory extraction")]
+    async fn commit(
         &self,
-        params: Parameters<QueryMemoryArgs>,
-    ) -> std::result::Result<Json<QueryMemoryResult>, String> {
-        debug!("query_memory called with args: {:?}", params.0);
+        params: Parameters<CommitArgs>,
+    ) -> std::result::Result<Json<CommitResult>, String> {
+        debug!("commit called with args: {:?}", params.0);
 
-        let limit = params.0.limit.unwrap_or(10);
-        let scope = params.0.scope.as_deref().unwrap_or("session");
+        let thread_id = params.0.thread_id.unwrap_or_else(|| "default".to_string());
 
-        // Build search scope URI
-        let scope_uri = if let Some(ref thread_id) = params.0.thread_id {
-            format!("cortex://session/{}", thread_id)
-        } else {
-            match scope {
-                "session" => "cortex://session".to_string(),
-                "user" => "cortex://user".to_string(),
-                "agent" => "cortex://agent".to_string(),
-                _ => "cortex://session".to_string(),
+        match self.operations.close_session_sync(&thread_id).await {
+            Ok(_) => {
+                info!("Session {} closed and fully processed (sync)", thread_id);
+
+                Ok(Json(CommitResult {
+                    success: true,
+                    thread_id: thread_id.clone(),
+                    message: "Session committed. All processing (memory extraction, L0/L1 generation, vector sync) completed.".to_string(),
+                }))
             }
+            Err(e) => {
+                error!("Failed to commit session {}: {}", thread_id, e);
+                Err(format!("Failed to commit session: {}", e))
+            }
+        }
+    }
+
+    // ==================== Filesystem Tools ====================
+
+    #[tool(description = "List directory contents to browse the memory space")]
+    async fn ls(
+        &self,
+        params: Parameters<LsArgsMcp>,
+    ) -> std::result::Result<Json<LsResult>, String> {
+        debug!("ls called with args: {:?}", params.0);
+
+        let uri = params.0.uri.as_deref().unwrap_or("cortex://session");
+        let include_abstracts = params.0.include_abstracts.unwrap_or(false);
+
+        let ls_args = LsArgs {
+            uri: uri.to_string(),
+            recursive: params.0.recursive,
+            include_abstracts: Some(include_abstracts),
         };
 
-        // Use VectorSearchEngine for layered semantic search (L0/L1/L2)
-        let options = SearchOptions {
-            limit,
-            threshold: 0.5, // Consistent with other usage modes
-            root_uri: Some(scope_uri.clone()),
-            recursive: true,
-        };
-
-        match self
-            .operations
-            .vector_engine()
-            .layered_semantic_search(&params.0.query, &options)
-            .await
-        {
-            Ok(results) => {
-                let search_results: Vec<SearchResultItem> = results
-                    .iter()
-                    .map(|r| SearchResultItem {
-                        uri: r.uri.clone(),
-                        score: r.score,
-                        snippet: r.snippet.clone(),
+        match self.operations.ls(ls_args).await {
+            Ok(response) => {
+                let entries: Vec<LsEntryMcp> = response
+                    .entries
+                    .into_iter()
+                    .map(|e| LsEntryMcp {
+                        name: e.name,
+                        uri: e.uri,
+                        is_directory: e.is_directory,
+                        size: e.child_count.map(|c| c as usize),
+                        abstract_text: e.abstract_text,
                     })
                     .collect();
 
-                let total = search_results.len();
-                info!("Query '{}' found {} results", params.0.query, total);
+                let total = entries.len();
+                info!("Listed {} items at {}", total, uri);
 
-                Ok(Json(QueryMemoryResult {
+                Ok(Json(LsResult {
                     success: true,
-                    query: params.0.query.clone(),
-                    results: search_results,
+                    uri: uri.to_string(),
+                    entries,
                     total,
                 }))
             }
             Err(e) => {
-                error!("Query failed: {}", e);
-                Err(format!("Search failed: {}", e))
+                error!("List failed: {}", e);
+                Err(format!("Failed to list: {}", e))
             }
         }
     }
 
-    #[tool(description = "List memories from a specific URI path")]
-    async fn list_memories(
+    // ==================== Exploration Tool ====================
+
+    #[tool(description = "Smart exploration of memory space, combining search and browsing")]
+    async fn explore(
         &self,
-        params: Parameters<ListMemoriesArgs>,
-    ) -> std::result::Result<Json<ListMemoriesResult>, String> {
-        debug!("list_memories called with args: {:?}", params.0);
+        params: Parameters<ExploreArgsMcp>,
+    ) -> std::result::Result<Json<ExploreResult>, String> {
+        debug!("explore called with args: {:?}", params.0);
 
-        let uri = params.0.uri.as_deref().unwrap_or("cortex://session");
-        let limit = params.0.limit.unwrap_or(50);
-        let include_abstracts = params.0.include_abstracts.unwrap_or(false);
-
-        // Use filesystem to list entries
-        let entries = match self.operations.filesystem().list(uri).await {
-            Ok(e) => e,
-            Err(e) => {
-                error!("List failed: {}", e);
-                return Err(format!("Failed to list: {}", e));
-            }
+        let explore_args = ExploreArgs {
+            query: params.0.query.clone(),
+            start_uri: params.0.start_uri.clone(),
+            max_depth: Some(3),
+            return_layers: params.0.return_layers.clone(),
         };
 
-        let mut result_entries = Vec::new();
+        match self.operations.explore(explore_args).await {
+            Ok(response) => {
+                let exploration_path: Vec<ExplorationPathItemMcp> = response
+                    .exploration_path
+                    .into_iter()
+                    .map(|item| ExplorationPathItemMcp {
+                        uri: item.uri,
+                        relevance_score: item.relevance_score,
+                        abstract_text: item.abstract_text,
+                    })
+                    .collect();
 
-        for entry in entries.into_iter().take(limit) {
-            // Skip hidden files (except layer files)
-            if entry.name.starts_with('.')
-                && entry.name != ".abstract.md"
-                && entry.name != ".overview.md"
-            {
-                continue;
-            }
+                let matches: Vec<SearchResultMcp> = response
+                    .matches
+                    .into_iter()
+                    .map(|m| SearchResultMcp {
+                        uri: m.uri,
+                        score: m.score,
+                        snippet: m.abstract_text.clone().unwrap_or_default(),
+                        overview: m.overview_text,
+                        content: m.content,
+                        layers: params.0.return_layers.clone().unwrap_or_else(|| vec!["L0".to_string()]),
+                    })
+                    .collect();
 
-            let abstract_text =
-                if include_abstracts && !entry.is_directory {
-                    self.operations
-                        .get_abstract(&entry.uri)
-                        .await
-                        .ok()
-                        .map(|a| a.abstract_text)
-                } else {
-                    None
-                };
+                info!(
+                    "Explore '{}' found {} matches from {} explored items",
+                    params.0.query, response.total_matches, response.total_explored
+                );
 
-            result_entries.push(ListEntry {
-                name: entry.name,
-                uri: entry.uri,
-                is_directory: entry.is_directory,
-                size: Some(entry.size as usize),
-                abstract_text,
-            });
-        }
-
-        let total = result_entries.len();
-        info!("Listed {} items at {}", total, uri);
-
-        Ok(Json(ListMemoriesResult {
-            success: true,
-            uri: uri.to_string(),
-            entries: result_entries,
-            total,
-        }))
-    }
-
-    #[tool(description = "Retrieve a specific memory by its URI")]
-    async fn get_memory(
-        &self,
-        params: Parameters<GetMemoryArgs>,
-    ) -> std::result::Result<Json<GetMemoryResult>, String> {
-        debug!("get_memory called with args: {:?}", params.0);
-
-        match self.operations.read_file(&params.0.uri).await {
-            Ok(content) => {
-                info!("Memory retrieved from: {}", params.0.uri);
-                Ok(Json(GetMemoryResult {
+                Ok(Json(ExploreResult {
                     success: true,
-                    uri: params.0.uri.clone(),
-                    content,
+                    query: params.0.query,
+                    exploration_path,
+                    matches,
+                    total_explored: response.total_explored,
+                    total_matches: response.total_matches,
                 }))
             }
             Err(e) => {
-                error!("Failed to get memory: {}", e);
-                Err(format!("Failed to get memory: {}", e))
+                error!("Explore failed: {}", e);
+                Err(format!("Explore failed: {}", e))
             }
         }
     }
 
-    #[tool(description = "Delete a memory by its URI")]
-    async fn delete_memory(
+    // ==================== Tiered Access Tools ====================
+
+    #[tool(description = "Get L0 abstract layer (~100 tokens) for quick relevance checking")]
+    async fn r#abstract(
         &self,
-        params: Parameters<DeleteMemoryArgs>,
-    ) -> std::result::Result<Json<DeleteMemoryResult>, String> {
-        debug!("delete_memory called with args: {:?}", params.0);
+        params: Parameters<AbstractArgs>,
+    ) -> std::result::Result<Json<AbstractResult>, String> {
+        debug!("abstract called with args: {:?}", params.0);
+
+        match self.operations.get_abstract(&params.0.uri).await {
+            Ok(abstract_result) => {
+                info!("Abstract retrieved for: {}", params.0.uri);
+                Ok(Json(AbstractResult {
+                    success: true,
+                    uri: params.0.uri.clone(),
+                    abstract_text: abstract_result.abstract_text,
+                    layer: abstract_result.layer,
+                    token_count: abstract_result.token_count,
+                }))
+            }
+            Err(e) => {
+                error!("Failed to get abstract: {}", e);
+                Err(format!("Failed to get abstract: {}", e))
+            }
+        }
+    }
+
+    #[tool(description = "Get L1 overview layer (~2000 tokens) for understanding core information")]
+    async fn overview(
+        &self,
+        params: Parameters<OverviewArgs>,
+    ) -> std::result::Result<Json<OverviewResult>, String> {
+        debug!("overview called with args: {:?}", params.0);
+
+        match self.operations.get_overview(&params.0.uri).await {
+            Ok(overview_result) => {
+                info!("Overview retrieved for: {}", params.0.uri);
+                Ok(Json(OverviewResult {
+                    success: true,
+                    uri: params.0.uri.clone(),
+                    overview_text: overview_result.overview_text,
+                    layer: overview_result.layer,
+                    token_count: overview_result.token_count,
+                }))
+            }
+            Err(e) => {
+                error!("Failed to get overview: {}", e);
+                Err(format!("Failed to get overview: {}", e))
+            }
+        }
+    }
+
+    #[tool(description = "Get L2 full content layer - the complete original content")]
+    async fn content(
+        &self,
+        params: Parameters<ContentArgs>,
+    ) -> std::result::Result<Json<ContentResult>, String> {
+        debug!("content called with args: {:?}", params.0);
+
+        match self.operations.read_file(&params.0.uri).await {
+            Ok(content) => {
+                let token_count = content.split_whitespace().count();
+                info!("Content retrieved from: {}", params.0.uri);
+                Ok(Json(ContentResult {
+                    success: true,
+                    uri: params.0.uri.clone(),
+                    content,
+                    layer: "L2".to_string(),
+                    token_count,
+                }))
+            }
+            Err(e) => {
+                error!("Failed to get content: {}", e);
+                Err(format!("Failed to get content: {}", e))
+            }
+        }
+    }
+
+    // ==================== Management Tools ====================
+
+    #[tool(description = "Delete a memory by its URI")]
+    async fn delete(
+        &self,
+        params: Parameters<DeleteArgs>,
+    ) -> std::result::Result<Json<DeleteResult>, String> {
+        debug!("delete called with args: {:?}", params.0);
 
         match self.operations.delete(&params.0.uri).await {
             Ok(_) => {
                 info!("Memory deleted: {}", params.0.uri);
-                Ok(Json(DeleteMemoryResult {
+                Ok(Json(DeleteResult {
                     success: true,
                     uri: params.0.uri.clone(),
                 }))
@@ -649,77 +860,25 @@ impl MemoryMcpService {
         }
     }
 
-    #[tool(description = "Get the L0 abstract (~100 tokens, for quick relevance checking) of a memory")]
-    async fn get_abstract(
-        &self,
-        params: Parameters<GetAbstractArgs>,
-    ) -> std::result::Result<Json<GetAbstractResult>, String> {
-        debug!("get_abstract called with args: {:?}", params.0);
-
-        match self.operations.get_abstract(&params.0.uri).await {
-            Ok(abstract_result) => {
-                info!("Abstract retrieved for: {}", params.0.uri);
-                Ok(Json(GetAbstractResult {
-                    success: true,
-                    uri: params.0.uri.clone(),
-                    abstract_text: abstract_result.abstract_text,
-                }))
-            }
-            Err(e) => {
-                error!("Failed to get abstract: {}", e);
-                Err(format!("Failed to get abstract: {}", e))
-            }
-        }
-    }
-
-    #[tool(description = "Get the L1 overview (~2000 tokens, for understanding core information) of a memory")]
-    async fn get_overview(
-        &self,
-        params: Parameters<GetOverviewArgs>,
-    ) -> std::result::Result<Json<GetOverviewResult>, String> {
-        debug!("get_overview called with args: {:?}", params.0);
-
-        match self.operations.get_overview(&params.0.uri).await {
-            Ok(overview_result) => {
-                info!("Overview retrieved for: {}", params.0.uri);
-                Ok(Json(GetOverviewResult {
-                    success: true,
-                    uri: params.0.uri.clone(),
-                    overview_text: overview_result.overview_text,
-                }))
-            }
-            Err(e) => {
-                error!("Failed to get overview: {}", e);
-                Err(format!("Failed to get overview: {}", e))
-            }
-        }
-    }
-
     #[tool(description = "Generate L0/L1 layer files for memories")]
-    async fn generate_layers(
+    async fn layers(
         &self,
-        params: Parameters<GenerateLayersArgs>,
-    ) -> std::result::Result<Json<GenerateLayersResult>, String> {
-        debug!("generate_layers called with args: {:?}", params.0);
+        params: Parameters<LayersArgs>,
+    ) -> std::result::Result<Json<LayersResult>, String> {
+        debug!("layers called with args: {:?}", params.0);
 
-        // ✅ 根据thread_id参数选择不同的处理方式
         let (stats, message) = if let Some(ref thread_id) = params.0.thread_id {
-            // 只生成特定session的层级文件
             match self.operations.ensure_session_layers(thread_id).await {
                 Ok(stats) => {
                     let msg = format!("Generated layers for session {}", thread_id);
                     (stats, msg)
                 }
                 Err(e) => {
-                    error!(
-                        "Failed to generate layers for session {}: {}",
-                        thread_id, e
-                    );
+                    error!("Failed to generate layers for session {}: {}", thread_id, e);
                     return Err(format!("Failed to generate layers: {}", e));
                 }
             }
         } else {
-            // 生成所有session的层级文件
             match self.operations.ensure_all_layers().await {
                 Ok(stats) => {
                     let msg = "Generated layers for all sessions".to_string();
@@ -737,7 +896,7 @@ impl MemoryMcpService {
             message, stats.total, stats.generated, stats.failed
         );
 
-        Ok(Json(GenerateLayersResult {
+        Ok(Json(LayersResult {
             success: true,
             message,
             total: stats.total,
@@ -747,15 +906,13 @@ impl MemoryMcpService {
     }
 
     #[tool(description = "Index memories to vector database")]
-    async fn index_memories(
+    async fn index(
         &self,
-        params: Parameters<IndexMemoriesArgs>,
-    ) -> std::result::Result<Json<IndexMemoriesResult>, String> {
-        debug!("index_memories called with args: {:?}", params.0);
+        params: Parameters<IndexArgs>,
+    ) -> std::result::Result<Json<IndexResult>, String> {
+        debug!("index called with args: {:?}", params.0);
 
-        // ✅ 根据thread_id参数选择不同的处理方式
         let (stats, message) = if let Some(ref thread_id) = params.0.thread_id {
-            // 只索引特定session的文件
             match self.operations.index_session_files(thread_id).await {
                 Ok(stats) => {
                     let msg = format!("Indexed memories for session {}", thread_id);
@@ -767,7 +924,6 @@ impl MemoryMcpService {
                 }
             }
         } else {
-            // 索引所有文件
             match self.operations.index_all_files().await {
                 Ok(stats) => {
                     let msg = "Indexed all memory files".to_string();
@@ -785,7 +941,7 @@ impl MemoryMcpService {
             message, stats.total_files, stats.indexed_files, stats.skipped_files, stats.error_files
         );
 
-        Ok(Json(IndexMemoriesResult {
+        Ok(Json(IndexResult {
             success: true,
             message,
             total_files: stats.total_files,
@@ -794,37 +950,6 @@ impl MemoryMcpService {
             error_files: stats.error_files,
         }))
     }
-
-    #[tool(description = "Close a session and wait for final processing (L0/L1 generation, memory extraction, indexing)")]
-    async fn close_session(
-        &self,
-        params: Parameters<CloseSessionArgs>,
-    ) -> std::result::Result<Json<CloseSessionResult>, String> {
-        debug!("close_session called with args: {:?}", params.0);
-
-        let thread_id = &params.0.thread_id;
-
-        // Use close_session_sync which blocks until:
-        // 1. Memory extraction (LLM call on session timeline)
-        // 2. user/agent memory files written
-        // 3. L0/L1 layer files generated for all affected directories
-        // 4. Session timeline synced to vector store
-        match self.operations.close_session_sync(thread_id).await {
-            Ok(_) => {
-                info!("Session {} closed and fully processed (sync)", thread_id);
-
-                Ok(Json(CloseSessionResult {
-                    success: true,
-                    thread_id: thread_id.clone(),
-                    message: "Session closed. All processing (memory extraction, L0/L1 generation, vector sync) completed synchronously.".to_string(),
-                }))
-            }
-            Err(e) => {
-                error!("Failed to close session {}: {}", thread_id, e);
-                Err(format!("Failed to close session: {}", e))
-            }
-        }
-    }
 }
 
 #[tool_handler]
@@ -832,47 +957,14 @@ impl ServerHandler for MemoryMcpService {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Cortex Memory MCP Server - Provides memory management tools for AI assistants.\n\
-                \n\
-                **Automatic Processing:**\n\
-                The server automatically triggers memory extraction and layer generation when:\n\
-                - Message count reaches threshold (default: 10 messages)\n\
-                - Session becomes inactive (default: 2 minutes without new messages)\n\
-                \n\
-                This ensures user/agent memories are created even without explicit close_session calls.\n\
-                The processing uses the existing MemoryEventCoordinator infrastructure.\n\
-                \n\
-                Available tools:\n\
-                - store_memory: Store a new memory (triggers auto-processing when conditions met)\n\
-                - query_memory: Search memories using layered semantic search (L0→L1→L2)\n\
-                - list_memories: List memories at a specific path\n\
-                - get_memory: Retrieve full content of a specific memory\n\
-                - delete_memory: Delete a memory\n\
-                - get_abstract: Get L0 abstract (~100 tokens, for quick relevance checking)\n\
-                - get_overview: Get L1 overview (~2000 tokens, for understanding core information)\n\
-                - generate_layers: Generate L0/L1 layer files for memories (supports optional thread_id)\n\
-                - index_memories: Index memories to vector database (supports optional thread_id)\n\
-                - close_session: Close a session and wait for final processing\n\
-                \n\
-                Layered Access (L0/L1/L2):\n\
-                - L0 (Abstract): ~100 tokens, for quick relevance checking\n\
-                - L1 (Overview): ~2000 tokens, for understanding core information\n\
-                - L2 (Full Content): Complete content, only when detailed information is needed\n\
-                \n\
-                URI format: cortex://{dimension}/{category}/{resource}\n\
-                Examples:\n\
-                - cortex://session/default/timeline/...\n\
-                - cortex://user/preferences/language.md\n\
-                - cortex://agent/cases/case_001.md\n\
-                \n\
-                Session Management:\n\
-                - Sessions are automatically created on first store_memory call\n\
-                - Memory extraction happens automatically based on thresholds\n\
-                - close_session can still be called for explicit final processing\n\
-                - Each session has a unique thread_id for isolation"
-                    .to_string(),
+                "Cortex Memory MCP Server - Unified memory management tools.\n\n**Tool Naming Convention:** Simple verb style (search, store, ls, etc.)\n\n**Layer System:**\n- L0: Abstract (~100 tokens) - for quick relevance checking\n- L1: Overview (~2000 tokens) - for understanding core information\n- L2: Full content - complete original content\n\n**Automatic Processing:**\nThe server automatically triggers memory extraction and layer generation when:\n- Message count reaches threshold (default: 10 messages)\n- Session becomes inactive (default: 2 minutes without new messages)\n\n**Available tools:**\n- search: Layered semantic search with return_layers support\n- recall: Quick recall with L0+L2 content\n- store: Add a message to memory\n- commit: Commit session and trigger processing\n- ls: Browse memory filesystem\n- explore: Smart exploration of memory space\n- abstract: Get L0 abstract (~100 tokens)\n- overview: Get L1 overview (~2000 tokens)\n- content: Get L2 full content\n- delete: Delete a memory\n- layers: Generate L0/L1 layer files\n- index: Index memories to vector database\n".to_string(),
             ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            capabilities: ServerCapabilities {
+                tools: Some(ToolsCapability {
+                    list_changed: Some(false),
+                }),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }

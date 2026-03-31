@@ -189,13 +189,19 @@ impl MemoryEventCoordinator {
             pending_tasks,
             task_completion_tx,
             task_completion_rx,
-            suppress_layer_cascade_scopes: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
+            suppress_layer_cascade_scopes: Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashSet::new(),
+            )),
         });
 
         (coordinator, event_tx, event_rx)
     }
 
     /// Start the event processing loop
+    ///
+    /// ## 并行化改进
+    /// 每个事件在独立的 tokio::spawn 任务中处理，允许多个事件并行执行。
+    /// 这避免了长时间运行的事件（如 session closed）阻塞其他事件的处理。
     ///
     /// Phase 2: Integrates debouncer with periodic processing
     /// Returns a boxed future that can be spawned on a tokio runtime.
@@ -204,7 +210,7 @@ impl MemoryEventCoordinator {
         mut event_rx: mpsc::UnboundedReceiver<MemoryEvent>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
         Box::pin(async move {
-            info!("Memory Event Coordinator started");
+            info!("Memory Event Coordinator started (parallel mode)");
 
             // Phase 2: Setup periodic debouncer processing if enabled
             let mut debounce_interval = if self.debouncer.is_some() {
@@ -219,17 +225,19 @@ impl MemoryEventCoordinator {
                     event = event_rx.recv() => {
                         match event {
                             Some(event) => {
-                                // 🔧 关键修复：在取出事件时就增加计数
-                                // 这样 flush_and_wait 可以正确检测到有待处理的事件
-                                self.pending_tasks.fetch_add(1, Ordering::SeqCst);
+                                let coordinator = self.clone();
+                                tokio::spawn(async move {
+                                    // 在取出事件时就增加计数
+                                    coordinator.pending_tasks.fetch_add(1, Ordering::SeqCst);
 
-                                if let Err(e) = self.handle_event_inner(event).await {
-                                    error!("Event handling failed: {}", e);
-                                }
+                                    if let Err(e) = coordinator.handle_event_inner(event).await {
+                                        error!("Event handling failed: {}", e);
+                                    }
 
-                                // 减少计数并通知
-                                let remaining = self.pending_tasks.fetch_sub(1, Ordering::SeqCst) - 1;
-                                let _ = self.task_completion_tx.send(remaining);
+                                    // 减少计数并通知
+                                    let remaining = coordinator.pending_tasks.fetch_sub(1, Ordering::SeqCst) - 1;
+                                    let _ = coordinator.task_completion_tx.send(remaining);
+                                });
                             }
                             None => {
                                 warn!("Memory Event Coordinator stopped (channel closed)");
@@ -336,7 +344,11 @@ impl MemoryEventCoordinator {
                 return false;
             }
 
-            trace!("Waiting for {} tasks... (elapsed: {:?})", pending, start.elapsed());
+            trace!(
+                "Waiting for {} tasks... (elapsed: {:?})",
+                pending,
+                start.elapsed()
+            );
             tokio::time::sleep(check_interval).await;
         }
         debug!("Event processing tasks cleared");
@@ -729,7 +741,10 @@ impl MemoryEventCoordinator {
         user_id: &str,
         agent_id: &str,
     ) -> Result<()> {
-        info!("Processing session closed: {} (user={}, agent={})", session_id, user_id, agent_id);
+        info!(
+            "Processing session closed: {} (user={}, agent={})",
+            session_id, user_id, agent_id
+        );
 
         // 1. Extract memories from the session
         let extracted = self.extract_memories_from_session(session_id).await?;
@@ -778,8 +793,12 @@ impl MemoryEventCoordinator {
             //
             // Fix: call `layer_updater.update_all_layers` directly here so that L0/L1 is
             // generated before we return.
-            info!("Generating L0/L1 for user/{} after memory extraction...", user_id);
-            if let Err(e) = self.layer_updater
+            info!(
+                "Generating L0/L1 for user/{} after memory extraction...",
+                user_id
+            );
+            if let Err(e) = self
+                .layer_updater
                 .update_all_layers(&crate::memory_index::MemoryScope::User, user_id)
                 .await
             {
@@ -787,8 +806,12 @@ impl MemoryEventCoordinator {
             }
 
             if !extracted.cases.is_empty() {
-                info!("Generating L0/L1 for agent/{} after case memory extraction...", agent_id);
-                if let Err(e) = self.layer_updater
+                info!(
+                    "Generating L0/L1 for agent/{} after case memory extraction...",
+                    agent_id
+                );
+                if let Err(e) = self
+                    .layer_updater
                     .update_all_layers(&crate::memory_index::MemoryScope::Agent, agent_id)
                     .await
                 {
@@ -870,7 +893,8 @@ impl MemoryEventCoordinator {
     async fn on_vector_sync_needed(&self, file_uri: &str, change_type: &ChangeType) -> Result<()> {
         info!("🔍 VectorSync: processing {} ({:?})", file_uri, change_type);
 
-        match self.vector_sync
+        match self
+            .vector_sync
             .sync_file_change(file_uri, change_type.clone())
             .await
         {
@@ -1105,9 +1129,10 @@ Return ONLY the JSON object. No additional text before or after."#,
             match found {
                 Some((start, end)) => response[start..=end].to_string(),
                 None => {
+                    let preview: String = response.chars().take(500).collect();
                     warn!(
                         "LLM response contains no JSON object. Response preview: {}",
-                        &response[..response.len().min(500)]
+                        preview
                     );
                     return ExtractedMemories::default();
                 }
@@ -1117,10 +1142,10 @@ Return ONLY the JSON object. No additional text before or after."#,
         match serde_json::from_str::<ExtractedMemories>(&json_str) {
             Ok(memories) => memories,
             Err(e) => {
+                let preview: String = json_str.chars().take(1000).collect();
                 warn!(
                     "Failed to parse LLM extraction response: {}. JSON preview: {}",
-                    e,
-                    &json_str[..json_str.len().min(1000)]
+                    e, preview
                 );
                 ExtractedMemories::default()
             }

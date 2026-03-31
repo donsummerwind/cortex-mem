@@ -10,4 +10,5 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/", get(crate::handlers::sessions::list_sessions).post(crate::handlers::sessions::create_session))
         .route("/:thread_id/messages", post(crate::handlers::sessions::add_message))
         .route("/:thread_id/close", post(crate::handlers::sessions::close_session))
+        .route("/:thread_id/close-and-wait", post(crate::handlers::sessions::close_session_and_wait))
 }

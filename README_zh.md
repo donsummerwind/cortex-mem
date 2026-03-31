@@ -18,7 +18,7 @@
 <p align="center">
     <a href="https://github.com/sopaco/cortex-mem/tree/main/litho.docs/en"><img alt="Litho Docs" src="https://img.shields.io/badge/Litho-Docs-green?logo=Gitbook&color=%23008a60"/></a>
     <a href="https://github.com/sopaco/cortex-mem/tree/main/litho.docs/zh"><img alt="Litho Docs" src="https://img.shields.io/badge/Litho-中文-green?logo=Gitbook&color=%23008a60"/></a>
-  <a href="https://raw.githubusercontent.com/sopaco/cortex-mem/refs/heads/main/assets/benchmark/cortex_mem_vs_langmem.png"><img alt="Benchmark" src="https://img.shields.io/badge/Benchmark-Perfect-green?logo=speedtest&labelColor=%231150af&color=%2300b89f"></a>
+    <a href="https://raw.githubusercontent.com/sopaco/cortex-mem/refs/heads/main/assets/benchmark/cortex_mem_vs_openclaw_3.png?raw=true"><img alt="Benchmark" src="https://img.shields.io/badge/Benchmark-Perfect-green?logo=speedtest&labelColor=%231150af&color=%2300b89f"></a>
   <a href="https://github.com/sopaco/cortex-mem/actions/workflows/rust.yml"><img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/sopaco/cortex-mem/rust.yml?label=Build"></a>
   <a href="./LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue.svg?label=LICENSE" /></a>
 </p>
@@ -33,7 +33,7 @@ Cortex Memory 使用复杂的流水线来处理和管理内存，核心是**混�
 
 | 高效能 **渐进式记忆披露** 搜索架构 | 基于 **虚拟文件系统** 的记忆架构 |  **高精准** 记忆检索召回能力 |
 | :--- | :--- | :--- |
-| ![Layered Context Loading](./assets/intro/highlight_style_modern.jpg) |![architecture_style_modern](./assets/intro/highlight_style_classic_2.jpg) | ![architecture_style_classic](./assets/benchmark/cortex_mem_vs_langmem_thin.jpg) |
+| ![Layered Context Loading](./assets/intro/highlight_style_modern.jpg) |![architecture_style_modern](./assets/intro/highlight_style_classic_2.jpg) | ![architecture_style_classic](./assets/benchmark/cortex_mem_vs_openclaw_2.png) |
 
 **Cortex Memory** 使用**虚拟文件系统**方法组织数据,采用 `cortex://` URI 方案：
 
@@ -53,6 +53,20 @@ cortex://user/preferences/{name}.md
 cortex://agent/cases/{case_id}.md
 cortex://resources/{resource_name}/
 ```
+
+**高性能、低Token消耗的Memory解决方案，相比OpenClaw有显著优势，最高节约95%的token费用**
+LoCoMo Benchmark每题平均 Token 成本对比
+
+| 系统 | 每题输入 Tokens |
+|------|:--------------:|
+| **Cortex Memory（intent ON）** | **1,964** |
+| Cortex Memory（intent OFF） | 1,874 |
+| OpenClaw + OpenViking Plugin (-memory-core) | 2,769 |
+| OpenClaw + OpenViking Plugin (+memory-core) | 1,363 |
+| OpenClaw (memory-core 内置) | 15,982 |
+| OpenClaw + LanceDB (-memory-core) | 33,490 |
+
+> Cortex Memory 每题 效果表现与 OpenViking Plugin (+memory-core) 最强配置相当，token 成本远低于 LanceDB 和 memory-core 内置方案。
 
 <hr />
 
@@ -368,70 +382,65 @@ cargo run --release
 
 # 🏆 基准测试
 
-Cortex Memory已使用**LOCOMO数据集**（50个对话，150个问题）通过标准化内存系统评估框架对LangMem进行了严格评估。结果表明Cortex Memory在多个维度上表现出色。
+Cortex Memory 已在 **LoCoMo10 数据集**（conv-26，152 道问题，涵盖 2023 年 5 月至 10 月共 19 个会话）上进行了严格评测，采用与 OpenViking 官方评测完全相同的 **LLM-as-a-Judge** 方法。结果表明 Cortex Memory 在所有对比系统中表现最优。
 
 ## 性能比较
 
 <p align="center">
-  <img src="./assets/benchmark/cortex_mem_vs_langmem.png" alt="Cortex Memory vs LangMem Benchmark" width="800">
+  <img src="./assets/benchmark/cortex_mem_vs_openclaw_3.png" alt="Cortex Memory vs OpenViking/OpenClaw 内置记忆 Benchmark" width="800">
 </p>
 
 <p align="center">
-  <em><strong>整体性能：</strong> Cortex Memory在所有关键指标上显著优于LangMem</em>
+  <em><strong>综合得分：</strong> Cortex Memory v5 达到 <strong>68.42%</strong> — 超越所有 OpenViking 和 OpenClaw 配置</em>
 </p>
 
-### 关键指标
+### 综合得分
 
-| 指标 | Cortex Memory | LangMem | 提升 |
-|--------|---------------|---------|-------------|
-| **Recall@1** | 93.33% | 26.32% | **+67.02pp** |
-| **Recall@3** | 94.00% | 50.00% | +44.00pp |
-| **Recall@5** | 94.67% | 55.26% | +39.40pp |
-| **Recall@10** | 94.67% | 63.16% | +31.51pp |
-| **Precision@1** | 93.33% | 26.32% | +67.02pp |
-| **MRR** | 93.72% | 38.83% | **+54.90pp** |
-| **NDCG@5** | 80.73% | 18.72% | **+62.01pp** |
-| **NDCG@10** | 79.41% | 16.83% | **+62.58pp** |
+| 系统 | 得分 | 问题数 |
+|------|:----:|:------:|
+| **Cortex Memory v5（Intent ON）** | **68.42%** | 152 |
+| OpenViking + OpenClaw（−memory-core） | 52.08% | 1,540 |
+| OpenViking + OpenClaw（+memory-core） | 51.23% | 1,540 |
+| OpenClaw + LanceDB（−memory-core） | 44.55% | 1,540 |
+| OpenClaw（内置记忆） | 35.65% | 1,540 |
 
-### 详细结果
+### v5 分类得分详情
 
-<div style="text-align: center;">
-  <table style="width: 100%; margin: 0 auto;">
-    <tr>
-        <th style="width: 50%;"><strong>Cortex Memory评估：</strong> 出色的检索性能，93.33% Recall@1和93.72% MRR</td>
-        <th style="width: 50%;"><strong>LangMem评估：</strong> 适中的性能，26.32% Recall@1和38.83% MRR</td>
-    </tr>
-    <tr>
-      <td style="width: 50%;"><img src="./assets/benchmark/evaluation_cortex_mem.webp" alt="Cortex Memory Evaluation" style="width: 100%; height: auto; display: block;"></td>
-      <td style="width: 50%;"><img src="./assets/benchmark/evaluation_langmem.webp" alt="LangMem Evaluation" style="width: 100%; height: auto; display: block;"></td>
-    </tr>
-  </table>
-</div>
+| 分类 | 说明 | 得分 |
+|:----:|------|:----:|
+| Cat 1 | 事实召回 | 37.50%（12/32） |
+| Cat 2 | 时序推理 | 62.16%（23/37） |
+| Cat 3 | 常识推断 | 76.92%（10/13） |
+| Cat 4 | 多跳推理 | **84.29%**（59/70） |
+| **合计** | | **68.42%**（104/152） |
 
-### 主要发现
+### Token 效率
 
-1. **显著提高检索准确性**：Cortex Memory实现**93.33% Recall@1**，比LangMem的26.32%**提高了67.02个百分点**。这表明Cortex在第一次尝试时就检索相关内存方面远胜于LangMem。
+| 系统 | 平均每题 Tokens | 得分 | 每千 Token 得分 |
+|------|:--------------:|:----:|:--------------:|
+| **Cortex Memory v5** | **~2,900** | **68.42%** | **23.6** |
+| OpenViking + OpenClaw（−memory-core） | ~2,769 | 52.08% | 18.8 |
+| OpenViking + OpenClaw（+memory-core） | ~1,363 | 51.23% | 37.6 |
+| OpenClaw（内置记忆） | ~15,982 | 35.65% | 2.2 |
+| OpenClaw + LanceDB（−memory-core） | ~33,490 | 44.55% | 1.3 |
 
-2. **明显的排序质量优势**：Cortex Memory的**MRR为93.72%**，而LangMem为**38.83%**，表明它不仅检索准确，而且在结果列表中更高效地排列相关内存。
+> Cortex Memory 比 OpenClaw+LanceDB **节省 11 倍 Token**，每千 Token 得分比率**高出 18 倍**。
 
-3. **全面的性能领先**：在所有指标上 - 特别是**NDCG@5（80.73% vs 18.72%）** - Cortex在检索质量、排序准确性和整体性能上显示出持续的、显著的优势。
+### 核心技术优势
 
-4. **技术优势**：Cortex Memory的性能归因于：
-   - 高效的**基于Rust的实现**
-   - **Qdrant向量数据库**的强大检索能力
-   - **三级内存层次结构**（L0/L1/L2）与加权评分
-   - 优化的内存管理策略
+- **意图驱动检索**：将多跳查询路由至实体和关联记忆范围，Cat 4 精度提升 +18.75pp
+- **L0/L1/L2 分层架构**：从约 100 Token 的精简摘要出发进行精准检索 — 只为真正需要的上下文付费
+- **Rust 实现**：高性能、内存安全的核心，以 Qdrant 向量数据库为后端
 
-### 评估框架
+### 评测框架
 
-基准测试使用位于`examples/lomoco-evaluation`的专业内存系统评估框架，包括：
+评测脚本位于 `examples/locomo-evaluation`，实现了两阶段流水线：
 
-- **专业指标**：Recall@K、Precision@K、MRR、NDCG和答案质量指标
-- **增强数据集**：50个对话，150个问题，涵盖各种场景
-- **统计分析**：95%置信区间、标准差和基于类别的统计
-- **Cortex 专用评测**：基于 LoCoMo 方法的 Cortex Memory 专用评测流程
+1. **Ingest** — 按 sample 将对话会话写入 Cortex Memory 独立租户
+2. **QA** — 通过语义检索 + LLM 生成回答 152 道问题
+3. **Judge** — LLM-as-a-Judge 对每个答案评分（CORRECT / WRONG 二值，与 OpenViking 评测方法相同）
 
-有关运行评估的更多详细信息，请参阅[lomoco-evaluation README](examples/lomoco-evaluation/README.md)。
+有关运行评测的详细说明，请参阅 [locomo-evaluation README](examples/locomo-evaluation/README.md) 以及完整结果 [`examples/locomo-evaluation/BENCHMARK.md`](examples/locomo-evaluation/BENCHMARK.md)。
 
 # 🖥 入门指南
 

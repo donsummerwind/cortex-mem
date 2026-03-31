@@ -268,10 +268,15 @@ impl VectorSearchEngine {
         query: &str,
         options: &SearchOptions,
     ) -> Result<Vec<SearchResult>> {
-        // 1. Generate query embedding
-        let query_vec = self.embedding.embed(query).await?;
+        let intent = self.analyze_intent(query).await?;
+        let query_text = if intent.rewritten_query.trim().is_empty() {
+            query
+        } else {
+            &intent.rewritten_query
+        };
 
-        // 2. Search in Qdrant with scope filter
+        let query_vec = self.embedding.embed(query_text).await?;
+
         let mut filters = crate::types::Filters::default();
         if let Some(scope) = &options.root_uri {
             filters.uri_prefix = Some(scope.clone());
@@ -280,10 +285,14 @@ impl VectorSearchEngine {
         let scored = self
             .qdrant
             .as_ref()
-            .search_with_threshold(&query_vec, &filters, options.limit, Some(options.threshold))
+            .search_with_threshold(
+                &query_vec,
+                &filters,
+                options.limit.saturating_mul(3).max(options.limit),
+                Some(options.threshold),
+            )
             .await?;
 
-        // 3. Application-level URI prefix filtering (ensures scope isolation)
         let scope_prefix = options.root_uri.as_ref();
         let scored: Vec<_> = scored
             .into_iter()
@@ -298,43 +307,38 @@ impl VectorSearchEngine {
             })
             .collect();
 
-        // 4. Enrich results with content snippets
         let mut results = Vec::new();
         for scored_mem in scored {
-            let snippet = if scored_mem.memory.content.chars().count() > 200 {
-                format!(
-                    "{}...",
-                    scored_mem
-                        .memory
-                        .content
-                        .chars()
-                        .take(200)
-                        .collect::<String>()
-                )
-            } else {
-                scored_mem.memory.content.clone()
-            };
-
-            let uri = scored_mem
+            let raw_uri = scored_mem
                 .memory
                 .metadata
                 .uri
                 .clone()
                 .unwrap_or_else(|| scored_mem.memory.id.clone());
+            let canonical_uri = Self::canonicalize_uri(&raw_uri);
+            let mut score = scored_mem.score;
+
+            match scored_mem.memory.metadata.layer.as_str() {
+                "L2" => score += 0.08,
+                "L1" => score -= 0.04,
+                "L0" => score -= 0.08,
+                _ => {}
+            }
 
             results.push(SearchResult {
-                uri,
-                score: scored_mem.score,
-                snippet,
+                uri: canonical_uri,
+                score,
+                snippet: Self::extract_snippet(&scored_mem.memory.content, query_text),
                 content: Some(scored_mem.memory.content),
             });
         }
 
-        // 4. Filter archived memories (before emitting access events)
-        let results = self.filter_archived(results).await;
+        Self::rerank_results(&mut results, &intent);
+        Self::dedup_results(&mut results);
+        results.truncate(options.limit);
 
-        // 5. Emit MemoryAccessed events (fire-and-forget for forgetting mechanism)
-        self.emit_access_events(&results, query);
+        let results = self.filter_archived(results).await;
+        self.emit_access_events(&results, &intent.original_query);
 
         Ok(results)
     }
@@ -463,16 +467,14 @@ impl VectorSearchEngine {
         options: &SearchOptions,
         intent: &EnhancedQueryIntent,
     ) -> Result<Vec<SearchResult>> {
-        // 动态权重：根据意图类型选择 L0/L1/L2 的贡献比例
-        let weights = weight_model::weights_for_intent(&intent.intent_type);
+        let weights = weight_model::weights_for_intent(&intent.intent_type).normalize();
         info!(
             "Layer weights: L0={:.2}, L1={:.2}, L2={:.2} (intent={:?})",
             weights.l0, weights.l1, weights.l2, intent.intent_type
         );
 
-        // Stage 2: L1 deep exploration
         info!("Stage 2: Exploring L1 overview layer");
-        let mut candidates = Vec::new(); // (dir_uri, l0_score, l1_score, is_timeline)
+        let mut candidates = Vec::new();
 
         for l0_result in l0_results {
             let l0_uri = l0_result
@@ -482,7 +484,7 @@ impl VectorSearchEngine {
                 .clone()
                 .unwrap_or_else(|| l0_result.memory.id.clone());
 
-            let (dir_uri, is_timeline) = Self::extract_directory_from_l0_uri(&l0_uri);
+            let (dir_uri, _is_timeline) = Self::extract_directory_from_l0_uri(&l0_uri);
             let l1_id = uri_to_vector_id(&dir_uri, ContextLayer::L1Overview);
 
             let l1_score = if let Ok(Some(l1_memory)) = self.qdrant.get(&l1_id).await {
@@ -496,64 +498,22 @@ impl VectorSearchEngine {
             };
 
             if l0_result.score >= options.threshold * 0.5 || l1_score >= options.threshold * 0.5 {
-                candidates.push((dir_uri, l0_result.score, l1_score, is_timeline));
+                candidates.push((dir_uri, l0_result.score, l1_score));
             }
         }
 
         info!("Found {} candidates after L1 stage", candidates.len());
-
-        // Stage 3: L2 precise matching
         info!("Stage 3: Searching L2 detail layer");
         let mut final_results = Vec::new();
 
-        for (dir_uri, l0_score, l1_score, is_timeline) in candidates {
-            if is_timeline {
-                if let Ok(entries) = self.filesystem.list(&dir_uri).await {
-                    for entry in entries {
-                        if entry.is_directory
-                            || !entry.name.ends_with(".md")
-                            || (entry.name.starts_with('.')
-                                && !entry.name.ends_with(".abstract.md")
-                                && !entry.name.ends_with(".overview.md"))
-                        {
-                            continue;
-                        }
+        for (dir_uri, l0_score, l1_score) in candidates {
+            let mut stage3_targets = self.collect_stage3_targets(&dir_uri).await;
+            if stage3_targets.is_empty() {
+                stage3_targets.push(dir_uri.clone());
+            }
 
-                        let l2_id = uri_to_vector_id(&entry.uri, ContextLayer::L2Detail);
-                        if let Ok(Some(l2_memory)) = self.qdrant.get(&l2_id).await {
-                            let l2_score =
-                                Self::cosine_similarity(query_vec, &l2_memory.embedding);
-
-                            // 动态权重合并分数
-                            let combined_score =
-                                l0_score * weights.l0 + l1_score * weights.l1 + l2_score * weights.l2;
-
-                            if combined_score >= options.threshold {
-                                final_results.push(SearchResult {
-                                    uri: entry.uri,
-                                    score: combined_score,
-                                    snippet: Self::extract_snippet(&l2_memory.content, &intent.rewritten_query),
-                                    content: Some(l2_memory.content),
-                                });
-                            }
-                        } else {
-                            // L2 未索引，仅凭 L0/L1 加权降级
-                            let combined_score = l0_score * 0.4 + l1_score * 0.6;
-                            if combined_score >= options.threshold {
-                                if let Ok(content) = self.filesystem.read(&entry.uri).await {
-                                    final_results.push(SearchResult {
-                                        uri: entry.uri.clone(),
-                                        score: combined_score,
-                                        snippet: Self::extract_snippet(&content, &intent.rewritten_query),
-                                        content: Some(content),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                let l2_id = uri_to_vector_id(&dir_uri, ContextLayer::L2Detail);
+            for target_uri in stage3_targets {
+                let l2_id = uri_to_vector_id(&target_uri, ContextLayer::L2Detail);
                 if let Ok(Some(l2_memory)) = self.qdrant.get(&l2_id).await {
                     let l2_score = Self::cosine_similarity(query_vec, &l2_memory.embedding);
                     let combined_score =
@@ -561,19 +521,18 @@ impl VectorSearchEngine {
 
                     if combined_score >= options.threshold {
                         final_results.push(SearchResult {
-                            uri: dir_uri.clone(),
+                            uri: Self::canonicalize_uri(&target_uri),
                             score: combined_score,
                             snippet: Self::extract_snippet(&l2_memory.content, &intent.rewritten_query),
                             content: Some(l2_memory.content),
                         });
                     }
                 } else {
-                    // L2 未索引，仅凭 L0/L1 加权降级
                     let combined_score = l0_score * 0.4 + l1_score * 0.6;
                     if combined_score >= options.threshold {
-                        if let Ok(content) = self.filesystem.read(&dir_uri).await {
+                        if let Ok(content) = self.filesystem.read(&target_uri).await {
                             final_results.push(SearchResult {
-                                uri: dir_uri,
+                                uri: Self::canonicalize_uri(&target_uri),
                                 score: combined_score,
                                 snippet: Self::extract_snippet(&content, &intent.rewritten_query),
                                 content: Some(content),
@@ -584,11 +543,10 @@ impl VectorSearchEngine {
             }
         }
 
-        // Sort and truncate
-        final_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        Self::rerank_results(&mut final_results, intent);
+        Self::dedup_results(&mut final_results);
         final_results.truncate(options.limit);
 
-        // Filter out archived memories
         let final_results = self.filter_archived(final_results).await;
 
         info!(
@@ -596,7 +554,6 @@ impl VectorSearchEngine {
             final_results.len()
         );
 
-        // Emit MemoryAccessed events for final results (fire-and-forget)
         self.emit_access_events(&final_results, &intent.original_query);
 
         Ok(final_results)
@@ -604,7 +561,6 @@ impl VectorSearchEngine {
 
     /// 统一意图分析（优先使用 LLM 单次调用，LLM 不可用时使用最小 fallback）
     async fn analyze_intent(&self, query: &str) -> Result<EnhancedQueryIntent> {
-        // Skip LLM call when intent analysis is disabled via config
         if self.enable_intent_analysis {
             if let Some(llm) = &self.llm_client {
                 match self.analyze_intent_with_llm(llm.as_ref(), query).await {
@@ -613,24 +569,11 @@ impl VectorSearchEngine {
                 }
             }
         } else {
-            debug!("Intent analysis disabled, using raw query directly");
+            debug!("Intent analysis disabled, using heuristic fallback directly");
         }
 
-        // Fallback：LLM 不可用时的基础处理（不含规则判断，仅做基本分词）
-        debug!("Using fallback intent analysis (no LLM)");
-        Ok(EnhancedQueryIntent {
-            original_query: query.to_string(),
-            rewritten_query: query.to_string(),
-            // 使用 chars 保证 Unicode 安全，过滤掉单字符词
-            keywords: query
-                .split_whitespace()
-                .filter(|w| w.chars().count() > 1)
-                .map(|s| s.to_lowercase())
-                .collect(),
-            entities: vec![],
-            intent_type: QueryIntentType::General,
-            time_constraint: None,
-        })
+        debug!("Using heuristic fallback intent analysis");
+        Ok(Self::fallback_intent(query))
     }
 
     /// 使用 LLM 进行单次请求的统一意图分析
@@ -716,26 +659,27 @@ impl VectorSearchEngine {
     /// 根据意图类型动态调整 L0 检索阈值
     fn adaptive_l0_threshold(intent_type: &QueryIntentType) -> f32 {
         match intent_type {
-            // 实体查询：L0 摘要可能丢失实体，用低阈值确保候选集覆盖
+            // 实体查询：L0 摘要可能丢失实体细节，用更低阈值确保覆盖
+            // LoCoMo Cat 1 (factual) 事实类也需要更低阈值，避免遗漏
             QueryIntentType::EntityLookup => {
-                info!("EntityLookup: using lowered L0 threshold 0.35");
-                0.35
+                info!("EntityLookup: using lowered L0 threshold 0.28");
+                0.28
             }
             QueryIntentType::Factual => {
-                info!("Factual query: threshold 0.4");
-                0.4
+                info!("Factual query: threshold 0.32");
+                0.32
             }
             QueryIntentType::Temporal => {
-                info!("Temporal query: threshold 0.45");
-                0.45
+                info!("Temporal query: threshold 0.38");
+                0.38
             }
             QueryIntentType::Search | QueryIntentType::Relational => {
-                info!("Search/Relational query: threshold 0.4");
-                0.4
+                info!("Search/Relational query: threshold 0.35");
+                0.35
             }
             QueryIntentType::General => {
-                info!("General query: default threshold 0.5");
-                0.5
+                info!("General query: default threshold 0.45");
+                0.45
             }
         }
     }
@@ -748,7 +692,6 @@ impl VectorSearchEngine {
 
         if is_directory {
             if l0_uri.ends_with("/.abstract.md") {
-                // 安全移除后缀（使用字节截断是安全的，因为后缀全是 ASCII）
                 let dir = &l0_uri[..l0_uri.len() - "/.abstract.md".len()];
                 return (dir.to_string(), dir.contains("/timeline"));
             }
@@ -765,6 +708,350 @@ impl VectorSearchEngine {
         }
 
         (l0_uri.to_string(), false)
+    }
+
+    async fn collect_stage3_targets(&self, dir_uri: &str) -> Vec<String> {
+        let mut stack = vec![dir_uri.to_string()];
+        let mut visited = std::collections::HashSet::new();
+        let mut targets = Vec::new();
+
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+
+            let Ok(entries) = self.filesystem.list(&current).await else {
+                continue;
+            };
+
+            for entry in entries {
+                if entry.is_directory {
+                    if !entry.name.starts_with('.') {
+                        stack.push(entry.uri);
+                    }
+                    continue;
+                }
+
+                if entry.name.starts_with('.') || !entry.name.ends_with(".md") {
+                    continue;
+                }
+
+                targets.push(entry.uri);
+            }
+        }
+
+        targets
+    }
+
+    fn fallback_intent(query: &str) -> EnhancedQueryIntent {
+        let query_lower = query.to_lowercase();
+        let keywords = Self::fallback_keywords(query);
+        let entities = Self::fallback_entities(query);
+        let intent_type = if Self::contains_any(
+            &query_lower,
+            &["when", "date", "time", "before", "after", "昨天", "什么时候", "哪天"],
+        ) {
+            QueryIntentType::Temporal
+        } else if Self::contains_any(
+            &query_lower,
+            &[
+                "relationship",
+                "friend",
+                "partner",
+                "family",
+                "support",
+                "married",
+                "with",
+                "between",
+                "关系",
+                "支持",
+            ],
+        ) {
+            QueryIntentType::Relational
+        } else if Self::contains_any(
+            &query_lower,
+            &[
+                "list", "find", "search", "show", "summarize",
+                "activities", "hobbies", "hobby", "partake", "sports", "interests",
+                "哪些", "列出", "查找",
+            ],
+        ) {
+            QueryIntentType::Search
+        } else if Self::contains_any(
+            &query_lower,
+            &["who is", "what is", "identity", "background", "profile", "是谁", "身份"],
+        ) {
+            QueryIntentType::EntityLookup
+        } else {
+            QueryIntentType::Factual
+        };
+
+        let rewritten_query = Self::rewrite_query_for_intent(query, &intent_type, &keywords, &entities);
+
+        EnhancedQueryIntent {
+            original_query: query.to_string(),
+            rewritten_query,
+            keywords,
+            entities,
+            intent_type,
+            time_constraint: None,
+        }
+    }
+
+    fn fallback_keywords(query: &str) -> Vec<String> {
+        let mut keywords: Vec<String> = query
+            .split(|c: char| !c.is_alphanumeric() && c != '+' && c != '#')
+            .filter(|s| s.chars().count() > 2)
+            .map(|s| s.to_lowercase())
+            .filter(|s| {
+                !matches!(
+                    s.as_str(),
+                    "what"
+                        | "when"
+                        | "where"
+                        | "which"
+                        | "who"
+                        | "tell"
+                        | "about"
+                        | "does"
+                        | "did"
+                        | "with"
+                        | "from"
+                        | "that"
+                        | "this"
+                )
+            })
+            .collect();
+
+        keywords.sort();
+        keywords.dedup();
+        keywords
+    }
+
+    fn fallback_entities(query: &str) -> Vec<String> {
+        let mut entities = Vec::new();
+        for token in query.split_whitespace() {
+            let cleaned = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '_');
+            if cleaned.chars().count() < 2 {
+                continue;
+            }
+            if cleaned.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                entities.push(cleaned.to_string());
+            }
+        }
+        entities.sort();
+        entities.dedup();
+        entities
+    }
+
+    fn rewrite_query_for_intent(
+        query: &str,
+        intent_type: &QueryIntentType,
+        keywords: &[String],
+        entities: &[String],
+    ) -> String {
+        let mut terms: Vec<String> = Vec::new();
+        terms.push(query.to_string());
+        terms.extend(entities.iter().cloned());
+        terms.extend(keywords.iter().take(6).cloned());
+
+        match intent_type {
+            QueryIntentType::EntityLookup => terms.extend(
+                ["identity", "background", "profile", "personal info"]
+                    .into_iter()
+                    .map(str::to_string),
+            ),
+            QueryIntentType::Factual => terms.extend(
+                ["fact", "details", "context"]
+                    .into_iter()
+                    .map(str::to_string),
+            ),
+            QueryIntentType::Temporal => terms.extend(
+                ["timeline", "event", "date", "time"]
+                    .into_iter()
+                    .map(str::to_string),
+            ),
+            QueryIntentType::Relational => terms.extend(
+                ["relationship", "friend", "support", "connection"]
+                    .into_iter()
+                    .map(str::to_string),
+            ),
+            QueryIntentType::Search => terms.extend(
+                ["search", "relevant", "memory"]
+                    .into_iter()
+                    .map(str::to_string),
+            ),
+            QueryIntentType::General => {}
+        }
+
+        terms.sort();
+        terms.dedup();
+        terms.join(" ").chars().take(200).collect()
+    }
+
+    fn contains_any(text: &str, needles: &[&str]) -> bool {
+        needles.iter().any(|needle| text.contains(needle))
+    }
+
+    fn canonicalize_uri(uri: &str) -> String {
+        if let Some(stripped) = uri.strip_suffix("/.abstract.md") {
+            stripped.to_string()
+        } else if let Some(stripped) = uri.strip_suffix("/.overview.md") {
+            stripped.to_string()
+        } else {
+            uri.to_string()
+        }
+    }
+
+    fn is_summary_uri(uri: &str) -> bool {
+        uri.ends_with("/.abstract.md") || uri.ends_with("/.overview.md")
+    }
+
+    fn is_leaf_uri(uri: &str) -> bool {
+        uri.ends_with(".md") && !Self::is_summary_uri(uri)
+    }
+
+    fn collection_summary_penalty(path_lower: &str) -> f32 {
+        if path_lower.ends_with("/entities")
+            || path_lower.ends_with("/events")
+            || path_lower.ends_with("/goals")
+            || path_lower.ends_with("/relationships")
+        {
+            -0.14
+        } else if path_lower.contains("/entities/") {
+            -0.08
+        } else {
+            0.0
+        }
+    }
+
+    fn intent_path_bonus(intent_type: &QueryIntentType, path_lower: &str) -> f32 {
+        match intent_type {
+            QueryIntentType::EntityLookup => {
+                if path_lower.contains("/personal_info/") {
+                    0.30
+                } else if path_lower.contains("/events/") {
+                    0.12
+                } else if path_lower.contains("/entities/") {
+                    -0.14
+                } else if path_lower.contains("/preferences/") {
+                    -0.20
+                } else if path_lower.contains("/relationships/") {
+                    -0.26
+                } else if path_lower.contains("/timeline/") {
+                    -0.06
+                } else {
+                    0.0
+                }
+            }
+            QueryIntentType::Factual => {
+                if path_lower.contains("/events/") || path_lower.contains("/personal_info/") {
+                    0.08
+                } else if path_lower.contains("/goals/") || path_lower.contains("/preferences/") {
+                    0.03
+                } else {
+                    0.0
+                }
+            }
+            QueryIntentType::Temporal => {
+                if path_lower.contains("/events/") || path_lower.contains("/timeline/") {
+                    0.06
+                } else if path_lower.contains("/goals/") || path_lower.contains("/preferences/") {
+                    -0.04
+                } else {
+                    0.0
+                }
+            }
+            QueryIntentType::Relational => {
+                if path_lower.contains("/relationships/") {
+                    0.16
+                } else if path_lower.contains("/personal_info/") {
+                    0.04
+                } else if path_lower.contains("/entities/") {
+                    -0.10
+                } else if path_lower.contains("/preferences/") {
+                    -0.12
+                } else if path_lower.contains("/goals/") {
+                    -0.08
+                } else {
+                    0.0
+                }
+            }
+            QueryIntentType::Search | QueryIntentType::General => 0.0,
+        }
+    }
+
+    fn rerank_results(results: &mut Vec<SearchResult>, intent: &EnhancedQueryIntent) {
+        for result in results.iter_mut() {
+            let uri_lower = result.uri.to_lowercase();
+            let snippet_lower = result.snippet.to_lowercase();
+            let keyword_hits = intent
+                .keywords
+                .iter()
+                .filter(|keyword| snippet_lower.contains(keyword.as_str()))
+                .count() as f32;
+            let entity_hits = intent
+                .entities
+                .iter()
+                .filter(|entity| snippet_lower.contains(&entity.to_lowercase()))
+                .count() as f32;
+
+            let mut bonus = if Self::is_leaf_uri(&result.uri) { 0.12 } else { -0.12 };
+            if Self::is_summary_uri(&result.uri) {
+                bonus -= 0.12;
+            }
+            bonus += keyword_hits.min(4.0) * 0.03;
+            bonus += entity_hits.min(3.0) * 0.05;
+            bonus += Self::collection_summary_penalty(&uri_lower);
+            bonus += Self::intent_path_bonus(&intent.intent_type, &uri_lower);
+
+            match intent.intent_type {
+                QueryIntentType::Temporal => {
+                    if snippet_lower.contains("date")
+                        || snippet_lower.contains("time")
+                        || snippet_lower.contains("yesterday")
+                        || snippet_lower.contains("last ")
+                    {
+                        bonus += 0.10;
+                    }
+                }
+                QueryIntentType::Relational => {
+                    if uri_lower.contains("/relationships/") {
+                        bonus += 0.06;
+                    }
+                }
+                QueryIntentType::EntityLookup | QueryIntentType::Factual => {}
+                QueryIntentType::Search | QueryIntentType::General => {}
+            }
+
+            result.score += bonus;
+        }
+
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    }
+
+    fn dedup_results(results: &mut Vec<SearchResult>) {
+        let mut merged: std::collections::HashMap<String, SearchResult> =
+            std::collections::HashMap::new();
+
+        for mut result in std::mem::take(results) {
+            result.uri = Self::canonicalize_uri(&result.uri);
+            match merged.get_mut(&result.uri) {
+                Some(existing) => {
+                    if result.score > existing.score {
+                        *existing = result;
+                    } else if existing.content.is_none() {
+                        existing.content = result.content;
+                    }
+                }
+                None => {
+                    merged.insert(result.uri.clone(), result);
+                }
+            }
+        }
+
+        *results = merged.into_values().collect();
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     }
 
     /// Calculate cosine similarity between two vectors

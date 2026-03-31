@@ -1,161 +1,255 @@
 use cortex_mem_core::{
-    CortexFilesystem, CortexMem, CortexMemBuilder, EmbeddingClient,
-    EmbeddingConfig, LLMClient, MemoryIndexManager, QdrantConfig,
-    SessionManager, VectorSearchEngine,
+    CortexMem, CortexMemBuilder, EmbeddingClient, EmbeddingConfig, FilesystemOperations, LLMClient,
+    MemoryIndexManager, QdrantConfig, SessionManager, VectorSearchEngine,
+    automation::{SyncConfig, SyncManager},
     memory_events::MemoryEvent,
-    memory_event_coordinator::{CoordinatorConfig, MemoryEventCoordinator},
 };
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 
 /// Application state shared across all handlers
 #[derive(Clone)]
 pub struct AppState {
-    #[allow(dead_code)]
-    pub cortex: Arc<CortexMem>,
-    #[allow(dead_code)]
-    pub filesystem: Arc<CortexFilesystem>,
-    pub session_manager: Arc<tokio::sync::RwLock<SessionManager>>,
+    /// Current runtime. Rebuilt atomically on tenant switch to avoid split-brain state.
+    pub cortex: Arc<RwLock<Arc<CortexMem>>>,
+    /// Current SessionManager handle. Wrapped so tenant switch can replace the whole Arc.
+    pub session_manager: Arc<RwLock<Arc<tokio::sync::RwLock<SessionManager>>>>,
     pub llm_client: Option<Arc<dyn LLMClient>>,
+    pub vector_store: Arc<RwLock<Option<Arc<dyn cortex_mem_core::vector_store::VectorStore>>>>,
     #[allow(dead_code)]
-    pub vector_store: Option<Arc<dyn cortex_mem_core::vector_store::VectorStore>>,
     pub embedding_client: Option<Arc<EmbeddingClient>>,
     /// Vector search engine with L0/L1/L2 layered search support
-    /// 使用RwLock支持租户切换时重新创建
     pub vector_engine: Arc<RwLock<Option<Arc<VectorSearchEngine>>>>,
     /// Base data directory
     pub data_dir: PathBuf,
     /// Current tenant root directory (if set)
     pub current_tenant_root: Arc<RwLock<Option<PathBuf>>>,
-    /// Current tenant ID (for recreating tenant-specific vector store)
+    /// Current tenant ID
     pub current_tenant_id: Arc<RwLock<Option<String>>>,
-    /// Memory event sender — used by close_session handler and add_message handler
-    /// to trigger memory extraction and vector indexing via `MemoryEventCoordinator`.
-    /// Wrapped in RwLock to support tenant switches (coordinator is rebuilt per-tenant).
+    /// Current runtime's memory event sender
     pub memory_event_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<MemoryEvent>>>>,
-    /// AutomationManager's tx handle — updated on tenant switch so AutomationManager
-    /// routes VectorSyncNeeded to the correct tenant coordinator.
-    pub automation_tx_handle: Option<Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<MemoryEvent>>>>>,
     /// Whether to use LLM intent analysis before each search (from config.toml [cortex] section).
-    /// When false, raw query is used directly — much faster but no query rewriting.
     pub enable_intent_analysis: bool,
+    /// Set of tenant IDs that have already had their bootstrap vector sync executed.
+    /// Prevents duplicate bootstrap runs when the same tenant is switched multiple times.
+    bootstrapped_tenants: Arc<RwLock<HashSet<String>>>,
+    /// Path to the configuration file
+    config_path: PathBuf,
 }
 
 impl AppState {
     /// Create new application state with unified automation
-    pub async fn new(data_dir: &str) -> anyhow::Result<Self> {
+    pub async fn new(data_dir: &str, config_path: &Path) -> anyhow::Result<Self> {
         let data_dir = PathBuf::from(data_dir);
 
-        // 使用Cortex MemoryBuilder统一初始化
         tracing::info!("Initializing Cortex Memory with unified automation...");
 
-        // 直接使用 data_dir 作为根目录（不再添加 cortex 子目录）
-        let cortex_dir = data_dir.clone();
+        let (llm_client, embedding_config, qdrant_config) = Self::load_configs(config_path)?;
 
-        // 获取配置（优先从config.toml，否则从环境变量）
-        let (llm_client, embedding_config, qdrant_config) = Self::load_configs()?;
-
-        // 读取 cortex section 配置（enable_intent_analysis 等）
-        let enable_intent_analysis = cortex_mem_config::Config::load("config.toml")
+        let enable_intent_analysis = cortex_mem_config::Config::load(config_path)
             .map(|c| c.cortex.enable_intent_analysis)
             .unwrap_or(true);
 
-        // 构建Cortex Memory
-        let mut builder = CortexMemBuilder::new(&cortex_dir);
-
-        // 配置LLM（如果有）
-        if let Some(llm) = llm_client.clone() {
-            builder = builder.with_llm(llm);
-        }
-
-        // 配置Embedding（如果有）
-        if let Some(emb_cfg) = embedding_config {
-            builder = builder.with_embedding(emb_cfg);
-        }
-
-        // 配置Qdrant（如果有）
-        if let Some(qdrant_cfg) = qdrant_config {
-            builder = builder.with_qdrant(qdrant_cfg);
-        }
-
-        // 使用 MemoryEventCoordinator 进行记忆提取和层级更新
-        // 配置协调器（可选，使用默认配置即可）
-        // builder = builder.with_coordinator_config(CoordinatorConfig::default());
-
-        // 构建Cortex Memory
-        let cortex = builder.build().await?;
+        let cortex = Arc::new(
+            Self::build_runtime(
+                &data_dir,
+                None,
+                llm_client.clone(),
+                embedding_config,
+                qdrant_config,
+            )
+            .await?,
+        );
+        Self::bootstrap_vectors_if_collection_empty(&cortex).await?;
         tracing::info!("✅ Cortex Memory initialized with MemoryEventCoordinator");
 
-        // 从Cortex Memory获取组件
-        let filesystem = cortex.filesystem();
         let session_manager = cortex.session_manager();
         let embedding_client = cortex.embedding();
         let vector_store = cortex.vector_store();
-
         let memory_event_tx = cortex.memory_event_tx();
-        let cortex_automation_tx = cortex.automation_tx_handle();
-
-        // Vector search engine — reuse the Qdrant connection from CortexMem builder
-        // instead of creating a third connection from config.
-        let qdrant_store_typed = cortex.qdrant_store();
-        let index_manager = Arc::new(MemoryIndexManager::new(filesystem.clone()));
-
-        let vector_engine = if let (Some(qdrant_arc), Some(ec)) =
-            (qdrant_store_typed, &embedding_client)
-        {
-            let mut engine = if let Some(llm) = &llm_client {
-                VectorSearchEngine::with_llm(
-                    qdrant_arc,
-                    ec.clone(),
-                    filesystem.clone(),
-                    llm.clone(),
-                )
-            } else {
-                VectorSearchEngine::new(
-                    qdrant_arc,
-                    ec.clone(),
-                    filesystem.clone(),
-                )
-            };
-            // Wire up forgetting-mechanism event tracking and archived-memory filter.
-            // Clone the sender so we can still store the original in AppState.
-            if let Some(ref tx) = memory_event_tx {
-                engine = engine.with_memory_event_tx(tx.clone());
-            }
-            engine = engine.with_index_manager(index_manager.clone());
-            engine = engine.with_intent_analysis(enable_intent_analysis);
-            Some(Arc::new(engine))
-        } else {
-            None
-        };
+        let vector_engine = Self::build_vector_engine(&cortex, enable_intent_analysis);
 
         Ok(Self {
-            cortex: Arc::new(cortex),
-            filesystem,
-            session_manager,
+            cortex: Arc::new(RwLock::new(cortex)),
+            session_manager: Arc::new(RwLock::new(session_manager)),
             llm_client,
-            vector_store,
+            vector_store: Arc::new(RwLock::new(vector_store)),
             embedding_client,
             vector_engine: Arc::new(RwLock::new(vector_engine)),
             data_dir,
             current_tenant_root: Arc::new(RwLock::new(None)),
             current_tenant_id: Arc::new(RwLock::new(None)),
             memory_event_tx: Arc::new(RwLock::new(memory_event_tx)),
-            automation_tx_handle: cortex_automation_tx,
             enable_intent_analysis,
+            bootstrapped_tenants: Arc::new(RwLock::new(HashSet::new())),
+            config_path: config_path.to_path_buf(),
         })
     }
 
-    /// Load configurations from config.toml or environment variables
-    fn load_configs() -> anyhow::Result<(
+    /// Get current SessionManager handle
+    pub async fn current_session_manager(&self) -> Arc<RwLock<SessionManager>> {
+        self.session_manager.read().await.clone()
+    }
+
+    fn build_vector_engine(
+        cortex: &Arc<CortexMem>,
+        enable_intent_analysis: bool,
+    ) -> Option<Arc<VectorSearchEngine>> {
+        let filesystem = cortex.filesystem();
+        let embedding_client = cortex.embedding();
+        let qdrant_store_typed = cortex.qdrant_store();
+        let llm_client = cortex.llm_client();
+        let memory_event_tx = cortex.memory_event_tx();
+        let index_manager = Arc::new(MemoryIndexManager::new(filesystem.clone()));
+
+        if let (Some(qdrant_arc), Some(ec)) = (qdrant_store_typed, embedding_client) {
+            let mut engine = if let Some(llm) = llm_client {
+                VectorSearchEngine::with_llm(qdrant_arc, ec.clone(), filesystem.clone(), llm)
+            } else {
+                VectorSearchEngine::new(qdrant_arc, ec.clone(), filesystem.clone())
+            };
+
+            if let Some(ref tx) = memory_event_tx {
+                engine = engine.with_memory_event_tx(tx.clone());
+            }
+            engine = engine.with_index_manager(index_manager);
+            engine = engine.with_intent_analysis(enable_intent_analysis);
+            Some(Arc::new(engine))
+        } else {
+            None
+        }
+    }
+
+    async fn build_runtime(
+        runtime_root: &Path,
+        tenant_id: Option<String>,
+        llm_client: Option<Arc<dyn LLMClient>>,
+        embedding_config: Option<EmbeddingConfig>,
+        qdrant_config: Option<QdrantConfig>,
+    ) -> anyhow::Result<CortexMem> {
+        let expected_vector = qdrant_config.is_some() && embedding_config.is_some();
+        let mut last_error: Option<anyhow::Error> = None;
+
+        for attempt in 1..=3 {
+            let mut builder = CortexMemBuilder::new(runtime_root);
+
+            if let Some(llm) = llm_client.clone() {
+                builder = builder.with_llm(llm);
+            }
+            if let Some(emb_cfg) = embedding_config.clone() {
+                builder = builder.with_embedding(emb_cfg);
+            }
+            if let Some(mut qdrant_cfg) = qdrant_config.clone() {
+                qdrant_cfg.tenant_id = tenant_id.clone();
+                builder = builder.with_qdrant(qdrant_cfg);
+            }
+
+            match builder.build().await {
+                Ok(cortex) => {
+                    if expected_vector
+                        && (cortex.vector_store().is_none() || cortex.memory_event_tx().is_none())
+                    {
+                        let err = anyhow::anyhow!(
+                            "runtime built without vector/coordinator capability for {:?}",
+                            runtime_root
+                        );
+                        tracing::warn!(
+                            "Tenant runtime build attempt {} degraded unexpectedly: {}",
+                            attempt,
+                            err
+                        );
+                        last_error = Some(err);
+                    } else {
+                        return Ok(cortex);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Tenant runtime build attempt {} failed for {:?}: {}",
+                        attempt,
+                        runtime_root,
+                        e
+                    );
+                    last_error = Some(e.into());
+                }
+            }
+
+            if attempt < 3 {
+                tokio::time::sleep(Duration::from_millis(800 * attempt as u64)).await;
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("failed to build runtime")))
+    }
+
+    async fn bootstrap_vectors_if_collection_empty(cortex: &Arc<CortexMem>) -> anyhow::Result<()> {
+        let filesystem = cortex.filesystem();
+        let mut has_bootstrap_content = false;
+        for uri in [
+            "cortex://user",
+            "cortex://agent",
+            "cortex://session",
+            "cortex://resources",
+        ] {
+            if let Ok(entries) = filesystem.list(uri).await {
+                if !entries.is_empty() {
+                    has_bootstrap_content = true;
+                    break;
+                }
+            }
+        }
+        if !has_bootstrap_content {
+            tracing::info!(
+                "Skipping bootstrap vector sync because no bootstrap content exists yet"
+            );
+            return Ok(());
+        }
+
+        let Some(qdrant_store) = cortex.qdrant_store() else {
+            return Ok(());
+        };
+        let Some(embedding_client) = cortex.embedding() else {
+            return Ok(());
+        };
+        let Some(llm_client) = cortex.llm_client() else {
+            return Ok(());
+        };
+
+        // Always run sync_all to catch any files that were missed due to rate limits or interruptions.
+        // The SyncManager will skip files that are already indexed (based on URI hash check).
+        tracing::info!("Running bootstrap vector sync to catch any missing embeddings...");
+        let sync_manager = SyncManager::new(
+            filesystem,
+            embedding_client,
+            qdrant_store,
+            llm_client,
+            SyncConfig::default(),
+        );
+        let stats = sync_manager.sync_all().await?;
+        tracing::info!(
+            indexed_files = stats.indexed_files,
+            skipped_files = stats.skipped_files,
+            error_files = stats.error_files,
+            total_files = stats.total_files,
+            "Bootstrap vector sync completed"
+        );
+        Ok(())
+    }
+
+    /// Load configurations from config file or environment variables
+    fn load_configs(
+        config_path: &Path,
+    ) -> anyhow::Result<(
         Option<Arc<dyn LLMClient>>,
         Option<EmbeddingConfig>,
         Option<QdrantConfig>,
     )> {
-        // Try to load from config.toml first
-        if let Ok(config) = cortex_mem_config::Config::load("config.toml") {
-            tracing::info!("Loaded configuration from config.toml");
+        // Try to load from config file first
+        if let Ok(config) = cortex_mem_config::Config::load(config_path) {
+            tracing::info!("Loaded configuration from {}", config_path.display());
 
             // LLM client
             let llm_client = {
@@ -195,7 +289,7 @@ impl AppState {
                 embedding_dim: config.qdrant.embedding_dim,
                 timeout_secs: config.qdrant.timeout_secs,
                 api_key: config.qdrant.api_key.clone(),
-                tenant_id: None, // 初始化时不设置租户ID（global）
+                tenant_id: None,
             };
 
             Ok((llm_client, Some(embedding_config), Some(qdrant_config)))
@@ -203,7 +297,6 @@ impl AppState {
             // Fallback to environment variables
             tracing::info!("Loading configuration from environment variables");
 
-            // LLM client from env
             let llm_client = if let (Ok(api_url), Ok(api_key), Ok(model)) = (
                 std::env::var("LLM_API_BASE_URL"),
                 std::env::var("LLM_API_KEY"),
@@ -218,7 +311,7 @@ impl AppState {
                 };
                 match cortex_mem_core::llm::LLMClientImpl::new(config) {
                     Ok(client) => {
-                        tracing::info!("LLM client initialized from env");
+                        tracing::info!("LLM client initialized from environment");
                         Some(Arc::new(client) as Arc<dyn LLMClient>)
                     }
                     Err(e) => {
@@ -227,46 +320,44 @@ impl AppState {
                     }
                 }
             } else {
-                tracing::warn!("LLM client not configured");
+                tracing::warn!("LLM environment variables not set, LLM features disabled");
                 None
             };
 
-            // Embedding config from env
-            let embedding_config = if let (Ok(api_url), Ok(api_key), Ok(model)) = (
+            let embedding_config = if let (Ok(api_base_url), Ok(api_key), Ok(model_name)) = (
                 std::env::var("EMBEDDING_API_BASE_URL"),
                 std::env::var("EMBEDDING_API_KEY"),
-                std::env::var("EMBEDDING_MODEL"),
+                std::env::var("EMBEDDING_MODEL_NAME"),
             ) {
                 Some(EmbeddingConfig {
-                    api_base_url: api_url,
+                    api_base_url,
                     api_key,
-                    model_name: model,
+                    model_name,
                     batch_size: 10,
                     timeout_secs: 30,
                     ..EmbeddingConfig::default()
                 })
             } else {
-                tracing::warn!("Embedding not configured");
+                tracing::warn!(
+                    "Embedding environment variables not set, vector search may be disabled"
+                );
                 None
             };
 
-            // Qdrant config from env
-            let qdrant_config = if let (Ok(url), Ok(collection)) = (
+            let qdrant_config = if let (Ok(url), Ok(collection_name)) = (
                 std::env::var("QDRANT_URL"),
                 std::env::var("QDRANT_COLLECTION"),
             ) {
                 Some(QdrantConfig {
                     url,
-                    collection_name: collection,
-                    embedding_dim: std::env::var("QDRANT_EMBEDDING_DIM")
-                        .ok()
-                        .and_then(|s| s.parse().ok()),
+                    collection_name,
+                    embedding_dim: None,
                     timeout_secs: 30,
                     api_key: std::env::var("QDRANT_API_KEY").ok(),
-                    tenant_id: None, // 初始化时不设置租户ID（global）
+                    tenant_id: None,
                 })
             } else {
-                tracing::warn!("Qdrant not configured");
+                tracing::warn!("Qdrant environment variables not set, vector search disabled");
                 None
             };
 
@@ -274,9 +365,98 @@ impl AppState {
         }
     }
 
-    /// List all available tenants
+    /// Switch to a different tenant by rebuilding a complete tenant-scoped runtime.
+    pub async fn switch_tenant(&self, tenant_id: &str) -> anyhow::Result<()> {
+        // Check if this tenant has already been bootstrapped
+        let needs_bootstrap = {
+            let bootstrapped = self.bootstrapped_tenants.read().await;
+            !bootstrapped.contains(tenant_id)
+        };
+
+        let tenant_root = self.data_dir.join("tenants").join(tenant_id);
+
+        std::fs::create_dir_all(tenant_root.join("agent"))?;
+        std::fs::create_dir_all(tenant_root.join("resources"))?;
+        std::fs::create_dir_all(tenant_root.join("session"))?;
+        std::fs::create_dir_all(tenant_root.join("user"))?;
+
+        let (llm_client, embedding_config, qdrant_config) = Self::load_configs(&self.config_path)?;
+        let new_cortex = Arc::new(
+            Self::build_runtime(
+                &tenant_root,
+                Some(tenant_id.to_string()),
+                llm_client,
+                embedding_config,
+                qdrant_config,
+            )
+            .await?,
+        );
+
+        // Run bootstrap vector sync in background only if this tenant hasn't been bootstrapped yet
+        if needs_bootstrap {
+            // Mark as bootstrapped before starting the background task
+            {
+                let mut bootstrapped = self.bootstrapped_tenants.write().await;
+                bootstrapped.insert(tenant_id.to_string());
+            }
+
+            let cortex_for_bg = new_cortex.clone();
+            let tenant_id_for_log = tenant_id.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = Self::bootstrap_vectors_if_collection_empty(&cortex_for_bg).await {
+                    tracing::warn!(
+                        "Background bootstrap vector sync failed for tenant {}: {}",
+                        tenant_id_for_log,
+                        e
+                    );
+                }
+            });
+        }
+
+        let new_session_manager = new_cortex.session_manager();
+        let new_vector_store = new_cortex.vector_store();
+        let new_memory_event_tx = new_cortex.memory_event_tx();
+        let new_vector_engine = Self::build_vector_engine(&new_cortex, self.enable_intent_analysis);
+
+        {
+            let mut cortex_guard = self.cortex.write().await;
+            *cortex_guard = new_cortex;
+        }
+        {
+            let mut session_guard = self.session_manager.write().await;
+            *session_guard = new_session_manager;
+        }
+        {
+            let mut store_guard = self.vector_store.write().await;
+            *store_guard = new_vector_store;
+        }
+        {
+            let mut tx_guard = self.memory_event_tx.write().await;
+            *tx_guard = new_memory_event_tx;
+        }
+        {
+            let mut engine_guard = self.vector_engine.write().await;
+            *engine_guard = new_vector_engine;
+        }
+        {
+            let mut current = self.current_tenant_root.write().await;
+            *current = Some(tenant_root.clone());
+        }
+        {
+            let mut current_id = self.current_tenant_id.write().await;
+            *current_id = Some(tenant_id.to_string());
+        }
+
+        tracing::info!(
+            "✅ Switched to tenant runtime: {} ({:?})",
+            tenant_id,
+            tenant_root
+        );
+        Ok(())
+    }
+
+    /// List all tenants
     pub async fn list_tenants(&self) -> Vec<String> {
-        // 租户目录位于 data_dir/tenants/
         let tenants_path = self.data_dir.join("tenants");
 
         let mut tenants = vec![];
@@ -292,108 +472,4 @@ impl AppState {
 
         tenants
     }
-
-    /// Switch to a different tenant
-    /// Recreates VectorSearchEngine with tenant-specific collection
-    pub async fn switch_tenant(&self, tenant_id: &str) -> anyhow::Result<()> {
-        // 租户目录直接位于 data_dir/tenants/{tenant_id}
-        let tenant_root_path = self.data_dir.join("tenants").join(tenant_id);
-
-        let tenant_root = if tenant_root_path.exists() {
-            tenant_root_path
-        } else {
-            // Auto-provision: 如果租户不存在，在 data_dir/tenants/ 下创建
-            tracing::info!("Tenant {} not found, auto-provisioning at {:?}", tenant_id, tenant_root_path);
-            for subdir in &["agent", "resources", "session", "user"] {
-                std::fs::create_dir_all(tenant_root_path.join(subdir))
-                    .map_err(|e| anyhow::anyhow!("Failed to create tenant dir: {}", e))?;
-            }
-            tracing::info!("✅ Tenant {} auto-provisioned successfully", tenant_id);
-            tenant_root_path
-        };
-
-        // Update current tenant root
-        let mut current = self.current_tenant_root.write().await;
-        *current = Some(tenant_root.clone());
-        drop(current);
-
-        // Update current tenant ID
-        let mut current_id = self.current_tenant_id.write().await;
-        *current_id = Some(tenant_id.to_string());
-        drop(current_id);
-
-        // Switch SessionManager's filesystem to the tenant root
-        // This ensures all session reads/writes go to the tenant directory
-        let tenant_filesystem = Arc::new(CortexFilesystem::new(
-            tenant_root.to_string_lossy().as_ref(),
-        ));
-        {
-            let mut session_mgr = self.session_manager.write().await;
-            session_mgr.switch_filesystem(tenant_filesystem.clone());
-        }
-
-        tracing::info!("Switched to tenant root: {:?}", tenant_root);
-
-        // Recreate MemoryEventCoordinator + VectorSearchEngine with tenant filesystem/collection
-        if let (Some(ec), Some(llm)) = (&self.embedding_client, &self.llm_client) {
-            let (_, _, qdrant_cfg_opt) = Self::load_configs()?;
-            if let Some(mut qdrant_cfg) = qdrant_cfg_opt {
-                qdrant_cfg.tenant_id = Some(tenant_id.to_string());
-
-                if let Ok(qdrant_store) = cortex_mem_core::QdrantVectorStore::new(&qdrant_cfg).await
-                {
-                    let qdrant_arc = Arc::new(qdrant_store);
-
-                    // Rebuild MemoryEventCoordinator with tenant filesystem so that
-                    // VectorSyncManager and CascadeLayerUpdater all read/write from
-                    // the correct tenant directory (not the global cortex/ root).
-                    let (new_coordinator, new_tx, new_rx) =
-                        MemoryEventCoordinator::new_with_config(
-                            tenant_filesystem.clone(),
-                            llm.clone(),
-                            ec.clone(),
-                            qdrant_arc.clone(),
-                            CoordinatorConfig::default(),
-                        );
-                    tokio::spawn(new_coordinator.start(new_rx));
-
-                    // Replace the event sender so add_message / close_session use the new coordinator
-                    {
-                        let mut tx_guard = self.memory_event_tx.write().await;
-                        *tx_guard = Some(new_tx.clone());
-                    }
-
-                    // Also update AutomationManager's tx so it routes to the tenant coordinator
-                    if let Some(ref atx_handle) = self.automation_tx_handle {
-                        let mut atx = atx_handle.write().await;
-                        *atx = Some(new_tx);
-                    }
-
-                    let new_vector_engine = Arc::new(
-                        VectorSearchEngine::with_llm(
-                            qdrant_arc,
-                            ec.clone(),
-                            tenant_filesystem.clone(),
-                            llm.clone(),
-                        )
-                        .with_index_manager(Arc::new(MemoryIndexManager::new(
-                            tenant_filesystem.clone(),
-                        )))
-                        .with_intent_analysis(self.enable_intent_analysis),
-                    );
-
-                    let mut engine = self.vector_engine.write().await;
-                    *engine = Some(new_vector_engine);
-
-                    tracing::info!(
-                        "✅ MemoryEventCoordinator + VectorSearchEngine recreated for tenant: {}",
-                        tenant_id
-                    );
-                }
-            }
-        }
-
-        Ok(())
-    }
-
 }

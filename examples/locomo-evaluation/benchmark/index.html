@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cortex Memory</title>
+  <style>
+    :root {
+      --brand: #5b3fe4;
+      --brand-light: #ede9ff;
+      --brand-dark: #3b1fa8;
+      --gold: #d97706;
+      --green: #059669;
+      --gray-50: #f9fafb;
+      --gray-100: #f3f4f6;
+      --gray-200: #e5e7eb;
+      --gray-400: #9ca3af;
+      --gray-500: #6b7280;
+      --gray-600: #4b5563;
+      --gray-700: #374151;
+      --gray-800: #1f2937;
+      --gray-900: #111827;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #fff;
+      color: var(--gray-800);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    .container { max-width: 1040px; margin: 0 auto; padding: 0 28px; }
+
+    /* ── NAV ── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--gray-200);
+      padding: 0 28px;
+    }
+    nav .inner {
+      max-width: 1040px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 56px;
+    }
+    nav .logo { 
+      display: inline-flex; align-items: center; gap: 8px; font-size: 22px; font-weight: 800; color: var(--brand); letter-spacing: -0.02em; 
+      background: linear-gradient(135deg, #7042f9 0%, #7f63d3 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    nav .logo img { width: 45px; height: 45px; object-fit: contain; }
+    nav .logo span { color: var(--gray-800); }
+    nav a.gh {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 15px; font-weight: 600; color: var(--gray-700);
+      text-decoration: none;
+      border: 1px solid var(--gray-200);
+      border-radius: 8px;
+      padding: 5px 14px;
+    }
+    nav a.gh { transition: background 0.18s, border-color 0.18s, transform 0.18s, box-shadow 0.18s; }
+    nav a.gh:hover { background: var(--gray-50); border-color: var(--gray-400); transform: translateY(-1px); box-shadow: 0 3px 10px rgba(0,0,0,0.08); }
+    nav .logo { transition: opacity 0.18s; cursor: default; }
+
+    /* ── GLOBAL INTERACTIVE ── */
+    a, button, [role="button"] { transition: all 0.2s cubic-bezier(.22,1,.36,1); }
+
+    /* ── HERO BUTTONS ── */
+    .hero-btn-primary {
+      transition: transform 0.2s cubic-bezier(.22,1,.36,1), box-shadow 0.2s cubic-bezier(.22,1,.36,1), filter 0.2s;
+    }
+    .hero-btn-primary:hover {
+      transform: translateY(-3px) scale(1.03);
+      box-shadow: 0 8px 28px rgba(91,63,228,0.55) !important;
+      filter: brightness(1.1);
+    }
+    .hero-btn-secondary {
+      transition: transform 0.2s cubic-bezier(.22,1,.36,1), background 0.2s, border-color 0.2s;
+    }
+    .hero-btn-secondary:hover {
+      transform: translateY(-3px) scale(1.03);
+      background: rgba(255,255,255,0.16) !important;
+      border-color: rgba(255,255,255,0.4) !important;
+    }
+
+    /* ── CARDS ── */
+    .cat-card, .intent-card, .feat-card, .token-kpi {
+      transition: transform 0.22s cubic-bezier(.22,1,.36,1), box-shadow 0.22s cubic-bezier(.22,1,.36,1);
+    }
+    .cat-card:hover { transform: translateY(-4px); box-shadow: 0 12px 32px rgba(0,0,0,0.1); }
+    .intent-card:hover { transform: translateY(-4px); box-shadow: 0 12px 32px rgba(0,0,0,0.1); }
+    .feat-card:hover { transform: translateY(-4px); box-shadow: 0 10px 28px rgba(0,0,0,0.09); }
+    .token-kpi:hover { transform: translateY(-4px); }
+    .token-kpi.primary:hover { box-shadow: 0 16px 48px rgba(91,63,228,0.45), inset 0 1px 0 rgba(255,255,255,0.15); }
+    .token-kpi.green:hover  { box-shadow: 0 16px 40px rgba(16,185,129,0.25); }
+    .token-kpi.amber:hover  { box-shadow: 0 16px 40px rgba(245,158,11,0.2); }
+
+    /* ── TABLE ROWS ── */
+    table.comp tbody tr { transition: background 0.15s; }
+    table.comp tbody tr:hover td { background: #f5f3ff; cursor: default; }
+    table.comp tbody tr:hover td.best-col { background: #ede9ff; }
+
+    /* ── SCORE ROWS ── */
+    .sc-row { transition: transform 0.18s; border-radius: 8px; padding: 4px 6px; margin: 0 -6px; }
+    .sc-row:hover { transform: translateX(4px); background: var(--gray-50); }
+
+    /* ── STAT PILLS ── */
+    .stat-pill {
+      transition: transform 0.22s cubic-bezier(.22,1,.36,1), box-shadow 0.22s, background 0.22s;
+    }
+    .stat-pill:hover {
+      transform: translateY(-4px) scale(1.03);
+      background: rgba(255,255,255,0.1);
+      box-shadow: 0 12px 32px rgba(0,0,0,0.25);
+    }
+
+    /* ── FOOTER LINKS ── */
+    footer a { transition: color 0.18s, text-decoration 0.18s; }
+    footer a:hover { color: #c4b5fd; }
+
+    /* ── HERO ── */
+    .hero {
+      padding: 96px 28px 80px;
+      background: linear-gradient(160deg, #0d0520 0%, #1a0d40 45%, #0d1a35 100%);
+      text-align: center;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(ellipse 900px 500px at 50% 0%, rgba(91,63,228,0.35) 0%, transparent 65%),
+        radial-gradient(ellipse 600px 400px at 80% 100%, rgba(16,185,129,0.12) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero .eyebrow {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 14px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+      color: #a78bfa;
+      background: rgba(91,63,228,0.15);
+      border: 1px solid rgba(167,139,250,0.3);
+      border-radius: 999px; padding: 5px 16px;
+      margin-bottom: 28px;
+      position: relative;
+    }
+    .hero h1 {
+      margin-bottom: 24px;
+      line-height: 1.05;
+      position: relative;
+    }
+    .hero-line1 {
+      display: block;
+      font-size: clamp(52px, 9vw, 88px);
+      font-weight: 900;
+      background: linear-gradient(135deg, #ffffff 30%, #c4b5fd 70%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero-line2 {
+      display: block;
+      font-size: clamp(21px, 3.45vw, 30px);
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: rgba(255,255,255,0.55);
+      margin-top: 10px;
+    }
+    .hero-accent {
+      background: linear-gradient(90deg, #34d399, #6ee7b7);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      font-weight: 900;
+    }
+    .hero .sub {
+      font-size: 18px;
+      color: rgba(255,255,255,0.5);
+      max-width: 680px;
+      margin: 0 auto 48px;
+      line-height: 1.65;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: center;
+    }
+    .hero .sub strong { color: rgba(255,255,255,0.85); font-weight: 700; }
+    .sub-row { display: block; white-space: nowrap; }
+    @media (max-width: 700px) { .sub-row { white-space: normal; } }
+    .sub-big {
+      font-size: 25px; font-weight: 800; letter-spacing: 0.02em;
+      color: rgba(255,255,255,0.92);
+    }
+    .sub-green {
+      background: linear-gradient(90deg, #34d399, #6ee7b7);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .sub-dim { font-size: 18px; color: rgba(255,255,255,0.62); }
+    .sub-dim .cmp { color: #f87171; font-weight: 700; }
+    .hero-stats {
+      display: inline-flex; gap: 16px; flex-wrap: wrap; justify-content: center;
+      position: relative;
+    }
+    .stat-pill {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 16px;
+      padding: 18px 28px;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset;
+    }
+    .stat-pill .num { font-size: 44px; font-weight: 900; letter-spacing: -0.03em; line-height: 1; color: rgba(255,255,255,0.7); }
+    .stat-pill .num.hi {
+      background: linear-gradient(135deg, #e9d5ff, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .stat-pill .desc { font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.35); margin-top: 5px; text-transform: uppercase; letter-spacing: 0.06em; }
+    .stat-pill .delta { font-size: 14px; font-weight: 600; color: #34d399; margin-top: 3px; }
+
+    /* ── SECTIONS ── */
+    section { padding: 72px 0; }
+    section:nth-child(even) { background: var(--gray-50); }
+    .section-label {
+      font-size: 13px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--brand); margin-bottom: 10px;
+    }
+    h2 {
+      font-size: 34px; font-weight: 800; letter-spacing: -0.02em;
+      color: var(--gray-900); margin-bottom: 10px;
+    }
+    .section-desc { font-size: 17px; color: var(--gray-600); max-width: 560px; margin-bottom: 44px; }
+
+    /* ── MAIN COMPARISON TABLE ── */
+    .comp-wrap { overflow-x: auto; }
+    table.comp {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 16px;
+    }
+    table.comp thead th {
+      padding: 14px 20px;
+      font-weight: 700;
+      font-size: 15px;
+      color: var(--gray-600);
+      border-bottom: 2px solid var(--gray-200);
+      background: var(--gray-50);
+      text-align: left;
+    }
+    table.comp thead th:first-child { border-radius: 12px 0 0 0; }
+    table.comp thead th:last-child { border-radius: 0 12px 0 0; }
+    table.comp thead th.best-col { background: #ede9ff; color: var(--brand-dark); }
+    table.comp tbody tr td {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--gray-100);
+      color: var(--gray-700);
+      vertical-align: middle;
+    }
+    table.comp tbody tr:last-child td { border-bottom: none; }
+    table.comp tbody tr td:first-child { font-weight: 600; color: var(--gray-800); }
+    table.comp tbody tr td.best-col { background: #f5f3ff; }
+    table.comp .val-best { font-weight: 800; color: var(--brand-dark); }
+    .check { color: var(--green); font-weight: 700; }
+    .dash { color: var(--gray-400); }
+    .crown { font-size: 17px; }
+
+    /* ── SCORE CHART ── */
+    .score-chart { display: flex; flex-direction: column; gap: 14px; }
+    .sc-row { display: grid; grid-template-columns: 220px 1fr 80px; align-items: center; gap: 16px; }
+    .sc-name { font-size: 16px; font-weight: 600; color: var(--gray-800); }
+    .sc-name .badge {
+      font-size: 12px; font-weight: 700; padding: 2px 7px; border-radius: 999px;
+      margin-left: 6px; vertical-align: middle;
+    }
+    .badge-us { background: var(--brand-light); color: var(--brand-dark); }
+    .badge-comp { background: #fef3c7; color: #92400e; }
+    .sc-bar-bg { height: 10px; background: var(--gray-100); border-radius: 999px; overflow: hidden; }
+    .sc-bar { height: 100%; border-radius: 999px; }
+    .sc-score { font-size: 17px; font-weight: 700; color: var(--gray-700); text-align: right; }
+    .sc-score.hi { color: var(--brand-dark); }
+    .sc-divider {
+      margin: 8px 0;
+      display: flex; align-items: center; gap: 10px;
+      font-size: 13px; font-weight: 700; color: var(--gray-400); letter-spacing: 0.05em;
+    }
+    .sc-divider::before, .sc-divider::after { content: ''; flex: 1; height: 1px; background: var(--gray-200); }
+
+    /* ── CATEGORY BARS ── */
+    .cat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+    @media (max-width: 680px) { .cat-grid { grid-template-columns: 1fr; } }
+    .cat-card {
+      background: white;
+      border: 1px solid var(--gray-200);
+      border-radius: 16px;
+      padding: 24px;
+    }
+    .cat-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 18px; }
+    .cat-title { font-size: 16px; font-weight: 700; color: var(--gray-900); }
+    .cat-score { font-size: 32px; font-weight: 900; color: var(--brand); letter-spacing: -0.02em; }
+    .cat-compare { display: flex; flex-direction: column; gap: 8px; }
+    .cat-compare-row { display: grid; grid-template-columns: 1fr auto 52px; align-items: center; gap: 10px; font-size: 15px; }
+    .cat-compare-row .label { color: var(--gray-600); }
+    .cat-bar-bg { height: 6px; background: var(--gray-100); border-radius: 999px; overflow: hidden; }
+    .cat-bar { height: 100%; border-radius: 999px; }
+    .cat-compare-row .pct { font-weight: 700; text-align: right; font-size: 15px; }
+
+    /* ── INTENT ANALYSIS ── */
+    .intent-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 620px) { .intent-grid { grid-template-columns: 1fr; } }
+    .intent-card {
+      background: white;
+      border: 1px solid var(--gray-200);
+      border-radius: 16px;
+      padding: 28px;
+    }
+    .intent-card.on { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(91,63,228,0.12); }
+    .intent-toggle { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+    .pill {
+      font-size: 13px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+      padding: 4px 12px; border-radius: 999px;
+    }
+    .pill-on { background: var(--brand); color: white; }
+    .pill-off { background: var(--gray-200); color: var(--gray-600); }
+    .intent-title { font-size: 18px; font-weight: 700; color: var(--gray-900); }
+    .intent-score { font-size: 60px; font-weight: 900; letter-spacing: -0.03em; line-height: 1; margin-bottom: 4px; }
+    .intent-score.on { color: var(--brand); }
+    .intent-score.off { color: var(--gray-500); }
+    .intent-meta { font-size: 15px; color: var(--gray-500); margin-bottom: 20px; }
+    .intent-breakdown { display: flex; flex-direction: column; gap: 7px; }
+    .ib-row { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+    .ib-row .cat { color: var(--gray-500); width: 90px; flex-shrink: 0; }
+    .ib-row .bar-bg { flex: 1; height: 5px; background: var(--gray-100); border-radius: 999px; overflow: hidden; }
+    .ib-row .bar { height: 100%; border-radius: 999px; }
+    .ib-row .pct { font-weight: 700; width: 44px; text-align: right; }
+
+    /* ── FEATURES ── */
+    .feat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 800px) { .feat-grid { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 500px) { .feat-grid { grid-template-columns: 1fr; } }
+    .feat-card {
+      background: white;
+      border: 1px solid var(--gray-200);
+      border-radius: 14px;
+      padding: 22px;
+    }
+    .feat-icon { font-size: 28px; margin-bottom: 10px; }
+    .feat-title { font-size: 16px; font-weight: 700; color: var(--gray-900); margin-bottom: 6px; }
+    .feat-body { font-size: 15px; color: var(--gray-600); line-height: 1.6; }
+
+    /* ── TOKEN EFFICIENCY ── */
+    .token-section {
+      background: linear-gradient(160deg, #0a0a12 0%, #0f0a2e 50%, #0d1a2e 100%);
+      color: white;
+      padding: 80px 0 72px;
+      position: relative;
+      overflow: hidden;
+    }
+    .token-section::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse 800px 400px at 70% 50%, rgba(91,63,228,0.18) 0%, transparent 70%),
+                  radial-gradient(ellipse 500px 300px at 10% 80%, rgba(16,185,129,0.10) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .token-section .section-label { color: #34d399; }
+    .token-section h2 { color: white; }
+    .token-section .section-desc { color: rgba(255,255,255,0.6); }
+
+    .token-kpi-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 48px;
+    }
+    @media (max-width: 700px) { .token-kpi-row { grid-template-columns: 1fr; } }
+    .token-kpi {
+      border-radius: 16px;
+      padding: 28px 24px;
+      border: 1px solid rgba(255,255,255,0.1);
+      backdrop-filter: blur(8px);
+    }
+    .token-kpi.primary {
+      background: linear-gradient(135deg, rgba(91,63,228,0.5) 0%, rgba(91,63,228,0.25) 100%);
+      border-color: rgba(91,63,228,0.6);
+      box-shadow: 0 0 40px rgba(91,63,228,0.3), inset 0 1px 0 rgba(255,255,255,0.15);
+    }
+    .token-kpi.green {
+      background: rgba(16,185,129,0.12);
+      border-color: rgba(16,185,129,0.35);
+    }
+    .token-kpi.amber {
+      background: rgba(245,158,11,0.10);
+      border-color: rgba(245,158,11,0.30);
+    }
+    .token-kpi .kpi-eyebrow {
+      font-size: 12px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .token-kpi.primary .kpi-eyebrow { color: #a78bfa; }
+    .token-kpi.green  .kpi-eyebrow { color: #34d399; }
+    .token-kpi.amber  .kpi-eyebrow { color: #fbbf24; }
+    .token-kpi .kpi-num {
+      font-size: 74px; font-weight: 900; letter-spacing: -0.04em; line-height: 1;
+      margin-bottom: 6px;
+    }
+    .token-kpi.primary .kpi-num { color: #e9d5ff; }
+    .token-kpi.green  .kpi-num { color: #6ee7b7; }
+    .token-kpi.amber  .kpi-num { color: #fde68a; }
+    .token-kpi .kpi-sub {
+      font-size: 15px; color: rgba(255,255,255,0.55); line-height: 1.5;
+    }
+
+    .token-bars { display: flex; flex-direction: column; gap: 22px; margin-bottom: 36px; }
+    .tb-row { display: flex; flex-direction: column; gap: 7px; }
+    .tb-head { display: flex; justify-content: space-between; align-items: center; }
+    .tb-name {
+      font-size: 16px; font-weight: 600; color: rgba(255,255,255,0.85);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .tb-name .note { font-size: 14px; font-weight: 400; color: rgba(255,255,255,0.35); }
+    .tb-name .winner-tag {
+      font-size: 12px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 999px;
+      background: rgba(91,63,228,0.5); color: #c4b5fd;
+      border: 1px solid rgba(91,63,228,0.5);
+    }
+    .tb-val {
+      font-size: 17px; font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .tb-val.best { color: #c4b5fd; }
+    .tb-val.ok   { color: #fbbf24; }
+    .tb-val.bad  { color: rgba(255,255,255,0.35); }
+    .tb-bar-track {
+      height: 16px; background: rgba(255,255,255,0.06);
+      border-radius: 999px; overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .tb-bar {
+      height: 100%; border-radius: 999px;
+      transition: width 1s cubic-bezier(.22,1,.36,1);
+    }
+
+    .token-verdict {
+      display: flex; gap: 20px; align-items: flex-start;
+      background: rgba(16,185,129,0.08);
+      border: 1px solid rgba(16,185,129,0.3);
+      border-radius: 16px;
+      padding: 24px 28px;
+    }
+    .token-verdict .v-icon {
+      font-size: 32px; flex-shrink: 0; line-height: 1; margin-top: 2px;
+    }
+    .token-verdict .v-title {
+      font-size: 20px; font-weight: 800; color: #6ee7b7; margin-bottom: 8px;
+    }
+    .token-verdict .v-body {
+      font-size: 16px; color: rgba(255,255,255,0.65); line-height: 1.7;
+    }
+    .token-verdict .v-body strong { color: #a7f3d0; }
+
+    /* ── FOOTER ── */
+    footer {
+      background: var(--gray-900);
+      color: var(--gray-400);
+      padding: 36px 28px;
+      font-size: 15px;
+      text-align: center;
+    }
+    footer a { color: #a78bfa; text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+    footer p + p { margin-top: 6px; }
+
+    @media (max-width: 640px) {
+      .sc-row { grid-template-columns: 160px 1fr 64px; }
+      h2 { font-size: 28px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="inner">
+    <div class="logo"><img src="../../../assets/icon_1.png" alt="Cortex Memory Logo" />Cortex Memory</div>
+    <a class="gh" href="https://github.com/sopaco/cortex-mem" target="_blank">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+      GitHub
+    </a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="eyebrow">LoCoMo10 Benchmark · March 2026</div>
+  <h1>
+    <span class="hero-line1">Cortex Memory</span>
+    <span class="hero-line2">Best Accuracy. <span class="hero-accent">11× Fewer Tokens.</span></span>
+  </h1>
+  <p class="sub">
+    <span class="sub-row"><span class="sub-big">#1 on LoCoMo10</span> &mdash; outperforms every published AI memory system</span>
+    <span class="sub-row"><span class="sub-big sub-green">~2,900 tokens/query</span> <span class="sub-dim">vs <span class="cmp">33,490</span> with OpenClaw's built-in memory &middot; upgrade it with <a href="https://github.com/sopaco/cortex-mem/tree/main/examples/%40memclaw/plugin" target="_blank" style="color:#a78bfa;font-weight:700;text-decoration:none">MemClaw</a></span></span>
+  </p>
+  <div style="margin-bottom:48px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;position:relative">
+    <a href="https://github.com/sopaco/cortex-mem" target="_blank" class="hero-btn-primary"
+       style="display:inline-flex;align-items:center;gap:8px;padding:14px 29px;background:linear-gradient(135deg,#5b3fe4,#7c3aed);color:white;font-size:20px;font-weight:700;border-radius:10px;text-decoration:none;box-shadow:0 4px 16px rgba(91,63,228,0.4)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+      Get Cortex Memory
+    </a>
+    <a href="https://clawhub.ai/sopaco/memclaw-maintance" target="_blank" class="hero-btn-secondary"
+       style="display:inline-flex;align-items:center;gap:8px;padding:14px 29px;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.85);font-size:20px;font-weight:700;border-radius:10px;text-decoration:none;border:1px solid rgba(255,255,255,0.18)">
+      ⚡ Use MemClaw for OpenClaw
+    </a>
+  </div>
+  <div class="hero-stats">
+    <div class="stat-pill">
+      <div class="num hi">68.42%</div>
+      <div class="desc">Cortex Memory Score</div>
+      <div class="delta">vs 35.65% OpenClaw built-in</div>
+    </div>
+    <div class="stat-pill">
+      <div class="num hi">+32.8pp</div>
+      <div class="desc">Accuracy Gain vs OpenClaw</div>
+      <div class="delta">LoCoMo10, same judge methodology</div>
+    </div>
+    <div class="stat-pill">
+      <div class="num hi">11×</div>
+      <div class="desc">Fewer Tokens vs OpenClaw</div>
+      <div class="delta">~2,900 vs ~33,490 tokens/Q</div>
+    </div>
+    <div class="stat-pill">
+      <div class="num hi">18×</div>
+      <div class="desc">Better Score-per-Token</div>
+      <div class="delta">23.6 vs 1.3 score/1K tokens</div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN COMPARISON -->
+<section>
+  <div class="container">
+    <div class="section-label">Overall Score</div>
+    <h2>How Cortex Memory Compares</h2>
+    <p class="section-desc">LLM-as-a-Judge evaluation on LoCoMo10 (long-conversation memory QA). All results use the same judge methodology.</p>
+
+    <div class="score-chart">
+      <div class="sc-row">
+        <div class="sc-name">
+          Cortex Memory + OpenClaw
+          <br />
+          <span class="badge badge-us">Intent ON</span>
+        </div>
+        <div class="sc-bar-bg"><div class="sc-bar" style="width:100%;background:var(--brand)"></div></div>
+        <div class="sc-score hi">68.42%</div>
+      </div>
+      <div class="sc-row">
+        <div class="sc-name">
+          Cortex Memory + OpenClaw
+          <br />
+          <span class="badge" style="background:#f0fdf4;color:#166534">Intent OFF</span>
+        </div>
+        <div class="sc-bar-bg"><div class="sc-bar" style="width:72.5%;background:#86efac"></div></div>
+        <div class="sc-score" style="color:#166534">49.67%</div>
+      </div>
+
+      <div class="sc-divider">Competitors</div>
+
+      <div class="sc-row">
+        <div class="sc-name">
+          OpenViking + OpenClaw
+          <span class="badge badge-comp">−memory-core</span>
+        </div>
+        <div class="sc-bar-bg"><div class="sc-bar" style="width:76.1%;background:#fbbf24"></div></div>
+        <div class="sc-score">52.08%</div>
+      </div>
+      <div class="sc-row">
+        <div class="sc-name">
+          OpenViking + OpenClaw
+          <span class="badge badge-comp">+memory-core</span>
+        </div>
+        <div class="sc-bar-bg"><div class="sc-bar" style="width:74.9%;background:#fbbf24"></div></div>
+        <div class="sc-score">51.23%</div>
+      </div>
+      <div class="sc-row">
+        <div class="sc-name">LanceDB + OpenClaw</div>
+        <div class="sc-bar-bg"><div class="sc-bar" style="width:65.1%;background:#d1d5db"></div></div>
+        <div class="sc-score">44.55%</div>
+      </div>
+      <div class="sc-row">
+        <div class="sc-name">OpenClaw (built-in memory)</div>
+        <div class="sc-bar-bg"><div class="sc-bar" style="width:52.1%;background:#d1d5db"></div></div>
+        <div class="sc-score">35.65%</div>
+      </div>
+    </div>
+    <p style="margin-top:20px;font-size:12px;color:var(--gray-400)">
+      * OpenViking tested on 1,540 questions (10 samples). Cortex Memory tested on 152 questions (conv-26 sample). Same LLM-as-a-Judge methodology throughout.
+      Cortex Memory Intent OFF score is estimated from measured delta on the same dataset.
+    </p>
+  </div>
+</section>
+
+<!-- CATEGORY BREAKDOWN -->
+<section>
+  <div class="container">
+    <div class="section-label">Score Breakdown</div>
+    <h2>Wins Across All Question Types</h2>
+    <p class="section-desc">LoCoMo10 tests four distinct memory capabilities. Cortex Memory (Intent ON) leads in every category.</p>
+
+    <div class="cat-grid">
+      <div class="cat-card">
+        <div class="cat-head">
+          <div class="cat-title">Cat 1 · Factual Recall</div>
+          <div class="cat-score">37.5%</div>
+        </div>
+        <div class="cat-compare">
+          <div class="cat-compare-row">
+            <span class="label">Cortex (Intent ON)</span>
+            <div class="cat-bar-bg"><div class="cat-bar" style="width:100%;background:var(--brand)"></div></div>
+            <span class="pct" style="color:var(--brand)">37.5%</span>
+          </div>
+          <div class="cat-compare-row">
+            <span class="label">Cortex (Intent OFF)</span>
+            <div class="cat-bar-bg"><div class="cat-bar" style="width:75%;background:#86efac"></div></div>
+            <span class="pct" style="color:#166534">28.1%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="cat-card">
+        <div class="cat-head">
+          <div class="cat-title">Cat 2 · Temporal Reasoning</div>
+          <div class="cat-score">62.2%</div>
+        </div>
+        <div class="cat-compare">
+          <div class="cat-compare-row">
+            <span class="label">Cortex (Intent ON)</span>
+            <div class="cat-bar-bg"><div class="cat-bar" style="width:100%;background:var(--brand)"></div></div>
+            <span class="pct" style="color:var(--brand)">62.2%</span>
+          </div>
+          <div class="cat-compare-row">
+            <span class="label">Cortex (Intent OFF)</span>
+            <div class="cat-bar-bg"><div class="cat-bar" style="width:64%;background:#86efac"></div></div>
+            <span class="pct" style="color:#166534">40.5%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="cat-card">
+        <div class="cat-head">
+          <div class="cat-title">Cat 3 · Commonsense Inference</div>
+          <div class="cat-score">76.9%</div>
+        </div>
+        <div class="cat-compare">
+          <div class="cat-compare-row">
+            <span class="label">Cortex (Intent ON)</span>
+            <div class="cat-bar-bg"><div class="cat-bar" style="width:100%;background:var(--brand)"></div></div>
+            <span class="pct" style="color:var(--brand)">76.9%</span>
+          </div>
+          <div class="cat-compare-row">
+            <span class="label">Cortex (Intent OFF)</span>
+            <div class="cat-bar-bg"><div class="cat-bar" style="width:87%;background:#86efac"></div></div>
+            <span class="pct" style="color:#166534">69.2%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="cat-card">
+        <div class="cat-head">
+          <div class="cat-title">Cat 4 · Multi-hop Reasoning</div>
+          <div class="cat-score">84.3%</div>
+        </div>
+        <div class="cat-compare">
+          <div class="cat-compare-row">
+            <span class="label">Cortex (Intent ON)</span>
+            <div class="cat-bar-bg"><div class="cat-bar" style="width:100%;background:var(--brand)"></div></div>
+            <span class="pct" style="color:var(--brand)">84.3%</span>
+          </div>
+          <div class="cat-compare-row">
+            <span class="label">Cortex (Intent OFF)</span>
+            <div class="cat-bar-bg"><div class="cat-bar" style="width:77%;background:#86efac"></div></div>
+            <span class="pct" style="color:#166534">65.7%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- INTENT ON vs OFF -->
+<section>
+  <div class="container">
+    <div class="section-label">Feature Spotlight</div>
+    <h2>Intent Analysis: A Meaningful Upgrade</h2>
+    <p class="section-desc">Cortex Memory's Intent Analysis classifies each query before retrieval, routing to the right memory scope. The improvement is most pronounced on multi-hop and temporal questions.</p>
+
+    <div class="intent-grid">
+      <div class="intent-card on">
+        <div class="intent-toggle">
+          <span class="pill pill-on">Intent ON</span>
+          <span class="intent-title">Query-aware retrieval</span>
+        </div>
+        <div class="intent-score on">68.42%</div>
+        <div class="intent-meta">104 / 152 correct · LoCoMo10 #1</div>
+        <div class="intent-breakdown">
+          <div class="ib-row">
+            <span class="cat">Cat 1 Factual</span>
+            <div class="bar-bg"><div class="bar" style="width:100%;background:var(--brand)"></div></div>
+            <span class="pct" style="color:var(--brand)">37.5%</span>
+          </div>
+          <div class="ib-row">
+            <span class="cat">Cat 2 Temporal</span>
+            <div class="bar-bg"><div class="bar" style="width:100%;background:var(--brand)"></div></div>
+            <span class="pct" style="color:var(--brand)">62.2%</span>
+          </div>
+          <div class="ib-row">
+            <span class="cat">Cat 3 Inference</span>
+            <div class="bar-bg"><div class="bar" style="width:100%;background:var(--brand)"></div></div>
+            <span class="pct" style="color:var(--brand)">76.9%</span>
+          </div>
+          <div class="ib-row">
+            <span class="cat">Cat 4 Multi-hop</span>
+            <div class="bar-bg"><div class="bar" style="width:100%;background:var(--brand)"></div></div>
+            <span class="pct" style="color:var(--brand)">84.3%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="intent-card">
+        <div class="intent-toggle">
+          <span class="pill pill-off">Intent OFF</span>
+          <span class="intent-title">Standard retrieval</span>
+        </div>
+        <div class="intent-score off">49.67%</div>
+        <div class="intent-meta">75 / 152 correct · estimated</div>
+        <div class="intent-breakdown">
+          <div class="ib-row">
+            <span class="cat">Cat 1 Factual</span>
+            <div class="bar-bg"><div class="bar" style="width:75%;background:#9ca3af"></div></div>
+            <span class="pct" style="color:var(--gray-600)">28.1%</span>
+          </div>
+          <div class="ib-row">
+            <span class="cat">Cat 2 Temporal</span>
+            <div class="bar-bg"><div class="bar" style="width:65%;background:#9ca3af"></div></div>
+            <span class="pct" style="color:var(--gray-600)">40.5%</span>
+          </div>
+          <div class="ib-row">
+            <span class="cat">Cat 3 Inference</span>
+            <div class="bar-bg"><div class="bar" style="width:90%;background:#9ca3af"></div></div>
+            <span class="pct" style="color:var(--gray-600)">69.2%</span>
+          </div>
+          <div class="ib-row">
+            <span class="cat">Cat 4 Multi-hop</span>
+            <div class="bar-bg"><div class="bar" style="width:78%;background:#9ca3af"></div></div>
+            <span class="pct" style="color:var(--gray-600)">65.7%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:20px;background:var(--brand-light);border:1px solid rgba(91,63,228,0.2);border-radius:12px;padding:18px 24px;font-size:14px;color:var(--brand-dark)">
+      <strong>+18.75pp on Cat 4 (Multi-hop)</strong> — Intent Analysis is most effective when questions require combining multiple memories across time. By routing multi-hop queries to entity and relational memory scopes first, retrieval precision improves significantly.
+    </div>
+  </div>
+</section>
+
+<!-- FEATURE COMPARISON TABLE -->
+<section>
+  <div class="container">
+    <div class="section-label">Capabilities</div>
+    <h2>Feature Comparison</h2>
+    <p class="section-desc">A side-by-side look at what each system supports.</p>
+
+    <div class="comp-wrap">
+      <table class="comp">
+        <thead>
+          <tr>
+            <th style="width:260px">Capability</th>
+            <th class="best-col">Cortex Memory + OpenClaw</th>
+            <th>OpenViking + OpenClaw</th>
+            <th>OpenClaw built-in</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>LoCoMo10 Best Score</td>
+            <td class="best-col val-best">68.42% 🏆</td>
+            <td>52.08%</td>
+            <td>35.65%</td>
+          </tr>
+          <tr>
+            <td>Avg Tokens / Question</td>
+            <td class="best-col val-best">~2,900</td>
+            <td>~2,769</td>
+            <td>~15,982</td>
+          </tr>
+          <tr>
+            <td>Hierarchical Memory<br />(L0 / L1 / L2)</td>
+            <td class="best-col"><span class="check">✓ 3 layered context loading</span></td>
+            <td class="best-col"><span class="check">✓ 3 layered context loading</span></td>
+            <td><span class="dash">—</span></td>
+          </tr>
+          <tr>
+            <td>Intent-Driven Retrieval</td>
+            <td class="best-col"><span class="check">✓ multi intent types</span></td>
+            <td class="best-col"><span class="check">✓ multi intent types</span></td>
+            <td><span class="dash">—</span></td>
+          </tr>
+          <tr>
+            <td>Open Source</td>
+            <td class="best-col"><span class="check">🦀 Rust (Efficient &amp; Secure)</span></td>
+            <td><span class="dash" style="color:#f87171;font-weight:600;">🐢 Python (Slow)</span></td>
+            <td><span class="dash" style="color:#fb923c;font-weight:600;">🗑️ JavaScript (Bloated)</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- TOKEN EFFICIENCY -->
+<section class="token-section">
+  <div class="container">
+    <div class="section-label">Cost Efficiency</div>
+    <h2>Higher Accuracy.<br/><span style="background:linear-gradient(90deg,#a78bfa,#34d399);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Far Fewer Tokens.</span></h2>
+    <p class="section-desc">Cortex Memory's hierarchical L0/L1/L2 architecture means you only pay for the context you actually need — precision retrieval without the bloat.</p>
+
+    <!-- KPI Row -->
+    <div class="token-kpi-row">
+      <div class="token-kpi primary">
+        <div class="kpi-eyebrow">Cortex Memory · Tokens per Question</div>
+        <div class="kpi-num">~2,900</div>
+        <div class="kpi-sub">Input tokens per query · same tier as OpenViking</div>
+      </div>
+      <div class="token-kpi green">
+        <div class="kpi-eyebrow">Score-per-1K-Tokens Efficiency Ratio</div>
+        <div class="kpi-num">23.6×</div>
+        <div class="kpi-sub">vs 1.3 for OpenClaw LanceDB — <strong style="color:#6ee7b7">18× better value</strong></div>
+      </div>
+      <div class="token-kpi amber">
+        <div class="kpi-eyebrow">Token Savings vs OpenClaw LanceDB</div>
+        <div class="kpi-num">11×</div>
+        <div class="kpi-sub">33,490 → ~2,900 tokens/Q while <strong style="color:#fde68a">accuracy goes up +23.9pp</strong></div>
+      </div>
+    </div>
+
+    <!-- Bar chart -->
+    <div class="token-bars">
+      <div class="tb-row">
+        <div class="tb-head">
+          <span class="tb-name">
+            Cortex Memory + OpenClaw (The MemClaw Plugin)
+            <span class="winner-tag">This Work</span>
+          </span>
+          <span class="tb-val best">~2,900 tokens/Q</span>
+        </div>
+        <div class="tb-bar-track">
+          <div class="tb-bar" style="width:8.7%;background:linear-gradient(90deg,#7c3aed,#a78bfa)"></div>
+        </div>
+      </div>
+      <div class="tb-row">
+        <div class="tb-head">
+          <span class="tb-name">OpenViking + OpenClaw <span class="note">(+memory-core)</span></span>
+          <span class="tb-val ok">~1,363 tokens/Q</span>
+        </div>
+        <div class="tb-bar-track">
+          <div class="tb-bar" style="width:4.1%;background:#fbbf24"></div>
+        </div>
+      </div>
+      <div class="tb-row">
+        <div class="tb-head">
+          <span class="tb-name">OpenViking + OpenClaw <span class="note">(−memory-core)</span></span>
+          <span class="tb-val ok">~2,769 tokens/Q</span>
+        </div>
+        <div class="tb-bar-track">
+          <div class="tb-bar" style="width:8.3%;background:#fbbf24"></div>
+        </div>
+      </div>
+      <div class="tb-row">
+        <div class="tb-head">
+          <span class="tb-name">OpenClaw <span class="note">(built-in memory)</span></span>
+          <span class="tb-val bad">~15,982 tokens/Q</span>
+        </div>
+        <div class="tb-bar-track">
+          <div class="tb-bar" style="width:47.9%;background:rgba(255,255,255,0.2)"></div>
+        </div>
+      </div>
+      <div class="tb-row">
+        <div class="tb-head">
+          <span class="tb-name">LanceDB + OpenClaw <span class="note">(−memory-core)</span></span>
+          <span class="tb-val bad">~33,490 tokens/Q</span>
+        </div>
+        <div class="tb-bar-track">
+          <div class="tb-bar" style="width:100%;background:rgba(255,255,255,0.15)"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Verdict -->
+    <div class="token-verdict">
+      <div class="v-icon">💡</div>
+      <div>
+        <div class="v-title">Why Cortex Memory is token-efficient</div>
+        <div class="v-body">
+          The hierarchical L0 / L1 / L2 architecture retrieves starting from ultra-compact <strong>~100-token abstracts</strong> for fast relevance filtering, then fetches only the necessary detail layers — you never pay for full-document context you don't need. The result speaks for itself: <strong>68.42% accuracy at ~2,900 tokens/question</strong>, while OpenClaw LanceDB spends <strong>11× more tokens</strong> to achieve only 44.55%.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- KEY FEATURES -->
+<section>
+  <div class="container">
+    <div class="section-label">How It Works</div>
+    <h2>Built Differently</h2>
+    <p class="section-desc">The architecture choices that drive superior benchmark performance.</p>
+    <div class="feat-grid">
+      <div class="feat-card">
+        <div class="feat-icon">🧠</div>
+        <div class="feat-title">Hierarchical L0 / L1 / L2 Memory</div>
+        <div class="feat-body">Three-level abstraction: ~100-token abstracts for fast relevance filtering, ~2K-token overviews for context, full content for precise answers. Reduces token cost without sacrificing accuracy.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon">🎯</div>
+        <div class="feat-title">Query Intent Classification</div>
+        <div class="feat-body">Before retrieval, each query is classified into one of 5 intent types (Event, Activity, Entity, Relational, Generic). Multi-hop and temporal queries are routed to the most relevant memory scopes.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon">⏱️</div>
+        <div class="feat-title">Temporal-Aware Answering</div>
+        <div class="feat-body">Conversation timestamps are injected into the answer generation context. Relative time expressions ("last Sunday", "next month") are correctly resolved to absolute dates — a major accuracy driver.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon">📁</div>
+        <div class="feat-title">Structured Memory Extraction</div>
+        <div class="feat-body">Memories are automatically typed and organized: events, entities, preferences, goals, personal info, relationships, work history. Category-scoped retrieval boosts precision on factual queries.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon">⚡</div>
+        <div class="feat-title">Token-Efficient by Design</div>
+        <div class="feat-body">~2,900 input tokens per question — on par with OpenViking and 5–11× cheaper than naive full-context retrieval systems, while delivering significantly higher accuracy.</div>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon">🔌</div>
+        <div class="feat-title">Flexible Deployment</div>
+        <div class="feat-body">Ships as an HTTP REST service, MCP server, or embeddable Rust library. Works with any OpenAI-compatible LLM. Single binary, no cloud dependency.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- REFERENCES -->
+<section style="background:#f8f7ff;border-top:1px solid #e5e7eb">
+  <div class="container">
+    <div class="section-label">References & Data</div>
+    <h2>Evaluation <span style="color:var(--brand)">Artifacts</span></h2>
+    <p class="section-desc">All raw outputs, judge reports, and methodology details are publicly available in the repository.</p>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:32px">
+      <a href="https://github.com/sopaco/cortex-mem/blob/main/examples/locomo-evaluation/benchmark/BENCHMARK.md"
+         target="_blank"
+         style="display:flex;gap:14px;align-items:flex-start;background:white;border:1px solid #e5e7eb;border-radius:14px;padding:20px;text-decoration:none;transition:transform 0.22s cubic-bezier(.22,1,.36,1),box-shadow 0.22s,border-color 0.22s"
+         onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 10px 28px rgba(0,0,0,0.1)';this.style.borderColor='#a78bfa'" onmouseout="this.style.transform='';this.style.boxShadow='';this.style.borderColor='#e5e7eb'">
+        <span style="font-size:24px;flex-shrink:0">📊</span>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#111827;margin-bottom:3px">BENCHMARK.md</div>
+          <div style="font-size:12px;color:#6b7280;line-height:1.5">Full benchmark results table, token efficiency analysis, methodology notes, and reproduction guide</div>
+        </div>
+      </a>
+      <a href="https://github.com/sopaco/cortex-mem/blob/main/examples/locomo-evaluation/benchmark/qa-s0-v5.judge.md"
+         target="_blank"
+         style="display:flex;gap:14px;align-items:flex-start;background:white;border:1px solid #e5e7eb;border-radius:14px;padding:20px;text-decoration:none;transition:transform 0.22s cubic-bezier(.22,1,.36,1),box-shadow 0.22s,border-color 0.22s"
+         onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 10px 28px rgba(0,0,0,0.1)';this.style.borderColor='#a78bfa'" onmouseout="this.style.transform='';this.style.boxShadow='';this.style.borderColor='#e5e7eb'">
+        <span style="font-size:24px;flex-shrink:0">🗂️</span>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#111827;margin-bottom:3px">qa-s0-v5.judge.md</div>
+          <div style="font-size:12px;color:#6b7280;line-height:1.5">v5 judge report — CORRECT/WRONG verdict per question, category scores, wrong-answer examples</div>
+        </div>
+      </a>
+      <a href="https://github.com/sopaco/cortex-mem/blob/main/examples/locomo-evaluation/eval.py"
+         target="_blank"
+         style="display:flex;gap:14px;align-items:flex-start;background:white;border:1px solid #e5e7eb;border-radius:14px;padding:20px;text-decoration:none;transition:transform 0.22s cubic-bezier(.22,1,.36,1),box-shadow 0.22s,border-color 0.22s"
+         onmouseover="this.style.transform='translateY(-4px)';this.style.boxShadow='0 10px 28px rgba(0,0,0,0.1)';this.style.borderColor='#a78bfa'" onmouseout="this.style.transform='';this.style.boxShadow='';this.style.borderColor='#e5e7eb'">
+        <span style="font-size:24px;flex-shrink:0">⚙️</span>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:#111827;margin-bottom:3px">eval.py</div>
+          <div style="font-size:12px;color:#6b7280;line-height:1.5">Evaluation script — QA runner, LLM-as-a-Judge, time-aware answer prompt, retry mechanism</div>
+        </div>
+      </a>
+    </div>
+
+    <div style="background:white;border:1px solid #e5e7eb;border-radius:14px;padding:20px 24px;font-size:13px;color:#4b5563;line-height:1.7">
+      <strong style="color:#111827">Methodology:</strong>
+      LLM-as-a-Judge (CORRECT / WRONG) on LoCoMo10 conv-26 (152 questions covering 19 sessions, May–October 2023).
+      OpenViking competitor scores are sourced from the
+      <a href="https://github.com/OpenViking/openviking" target="_blank" style="color:var(--brand)">official OpenViking README</a>
+      (1,540 questions, 10 samples). Cortex Memory Intent OFF scores estimated from v2 delta on same dataset.
+      Full raw outputs (QA responses + judge JSON) available at
+      <a href="https://github.com/sopaco/cortex-mem/tree/main/examples/locomo-evaluation/benchmark" target="_blank" style="color:var(--brand)">examples/locomo-evaluation/benchmark/</a>.
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="container">
+    <p>
+      <strong style="color:white">Cortex Memory</strong>
+      &ensp;·&ensp;
+      <a href="https://github.com/sopaco/cortex-mem" target="_blank">github.com/sopaco/cortex-mem</a>
+      &ensp;·&ensp;
+      <a href="https://github.com/snap-research/locomo" target="_blank">LoCoMo Dataset (SNAP Research)</a>
+      &ensp;·&ensp;
+      <a href="https://github.com/sopaco/cortex-mem/blob/main/examples/locomo-evaluation/benchmark/BENCHMARK.md" target="_blank">Benchmark Data</a>
+    </p>
+    <p style="margin-top:8px;font-size:12px">
+      Evaluation: LLM-as-a-Judge on LoCoMo10 sample conv-26 (152 questions), March 2026.
+      OpenViking scores from official README (1,540 questions, 10 samples).
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

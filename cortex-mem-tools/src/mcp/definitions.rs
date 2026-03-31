@@ -1,4 +1,14 @@
 // MCP Tool Definitions
+//
+// Unified tool definitions used by both cortex-mem-mcp and cortex-mem-service.
+// This ensures consistent naming and parameters across all integration points.
+//
+// Tool Naming Convention: Simple verb style (search, store, ls, etc.)
+//
+// Layer System:
+// - L0: Abstract (~100 tokens) - for quick relevance checking
+// - L1: Overview (~2000 tokens) - for understanding core information
+// - L2: Full content - complete original content
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -13,161 +23,30 @@ pub struct ToolDefinition {
 /// Get all MCP tool definitions
 pub fn get_mcp_tool_definitions() -> Vec<ToolDefinition> {
     vec![
-        // ==================== Tiered Access Tools ====================
-        ToolDefinition {
-            name: "abstract".to_string(),
-            description: "获取内容的 L0 抽象摘要（~100 tokens），用于快速判断相关性".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "uri": {
-                        "type": "string",
-                        "description": "内容的 URI（如 cortex://session/{session_id}/...）"
-                    }
-                },
-                "required": ["uri"]
-            }),
-        },
-        ToolDefinition {
-            name: "overview".to_string(),
-            description: "获取内容的 L1 概览（~2000 tokens），包含核心信息和使用场景".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "uri": {
-                        "type": "string",
-                        "description": "内容的 URI"
-                    }
-                },
-                "required": ["uri"]
-            }),
-        },
-        ToolDefinition {
-            name: "read".to_string(),
-            description: "获取 L2 完整内容，仅在需要详细信息时使用".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "uri": {
-                        "type": "string",
-                        "description": "内容的 URI"
-                    }
-                },
-                "required": ["uri"]
-            }),
-        },
         // ==================== Search Tools ====================
         ToolDefinition {
             name: "search".to_string(),
-            description: "智能搜索记忆，支持关键词/向量/混合检索和递归搜索".to_string(),
+            description: include_str!("../docs/search.md").to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "搜索查询"
-                    },
-                    "engine": {
-                        "type": "string",
-                        "enum": ["keyword", "vector", "hybrid"],
-                        "description": "检索引擎类型（keyword=关键词, vector=向量, hybrid=混合）",
-                        "default": "keyword"
-                    },
-                    "recursive": {
-                        "type": "boolean",
-                        "description": "是否递归搜索子目录",
-                        "default": true
-                    },
-                    "return_layers": {
-                        "type": "array",
-                        "items": {
-                            "type": "string",
-                            "enum": ["L0", "L1", "L2"]
-                        },
-                        "description": "返回哪些层级的内容（L0=摘要, L1=概览, L2=完整内容）",
-                        "default": ["L0"]
+                        "description": "The search query - can be natural language or keywords"
                     },
                     "scope": {
                         "type": "string",
-                        "description": "搜索范围 URI（如 cortex://session/{session_id}）",
-                        "default": "cortex://session"
+                        "description": "Optional session/thread ID to limit search scope, or 'user', 'agent', 'session'"
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "最大结果数",
+                        "description": "Maximum number of results to return (default: 10)",
                         "default": 10
-                    }
-                },
-                "required": ["query"]
-            }),
-        },
-        ToolDefinition {
-            name: "find".to_string(),
-            description: "快速查找内容，返回 L0 摘要".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "查找关键词"
                     },
-                    "scope": {
-                        "type": "string",
-                        "description": "查找范围 URI"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "最大结果数",
-                        "default": 5
-                    }
-                },
-                "required": ["query"]
-            }),
-        },
-        // ==================== Filesystem Tools ====================
-        ToolDefinition {
-            name: "ls".to_string(),
-            description: "列出目录内容，浏览文件系统结构".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "uri": {
-                        "type": "string",
-                        "description": "目录 URI（如 cortex://session/{session_id}/timeline）"
-                    },
-                    "recursive": {
-                        "type": "boolean",
-                        "description": "是否递归列出子目录",
-                        "default": false
-                    },
-                    "include_abstracts": {
-                        "type": "boolean",
-                        "description": "是否包含文件的 L0 摘要",
-                        "default": false
-                    }
-                },
-                "required": ["uri"]
-            }),
-        },
-        ToolDefinition {
-            name: "explore".to_string(),
-            description: "智能探索记忆空间，结合搜索和浏览".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "探索查询"
-                    },
-                    "start_uri": {
-                        "type": "string",
-                        "description": "起始 URI",
-                        "default": "cortex://session"
-                    },
-                    "max_depth": {
-                        "type": "integer",
-                        "description": "最大探索深度",
-                        "default": 3
+                    "min_score": {
+                        "type": "number",
+                        "description": "Minimum relevance score threshold (0-1, default: 0.5)",
+                        "default": 0.5
                     },
                     "return_layers": {
                         "type": "array",
@@ -175,8 +54,31 @@ pub fn get_mcp_tool_definitions() -> Vec<ToolDefinition> {
                             "type": "string",
                             "enum": ["L0", "L1", "L2"]
                         },
-                        "description": "返回哪些层级",
+                        "description": "Which layers to return. Default: [\"L0\"]. Use [\"L0\",\"L1\"] for more context, [\"L0\",\"L1\",\"L2\"] for full content.",
                         "default": ["L0"]
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        ToolDefinition {
+            name: "recall".to_string(),
+            description: include_str!("../docs/recall.md").to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query"
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": "Optional session/thread ID to limit search scope"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results (default: 10)",
+                        "default": 10
                     }
                 },
                 "required": ["query"]
@@ -185,29 +87,177 @@ pub fn get_mcp_tool_definitions() -> Vec<ToolDefinition> {
         // ==================== Storage Tools ====================
         ToolDefinition {
             name: "store".to_string(),
-            description: "存储新内容，自动生成 L0/L1 分层摘要".to_string(),
+            description: include_str!("../docs/store.md").to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "content": {
                         "type": "string",
-                        "description": "要存储的内容"
+                        "description": "The content to store in memory"
                     },
                     "thread_id": {
                         "type": "string",
-                        "description": "线程 ID"
+                        "description": "Thread/session ID (uses default if not specified)"
                     },
-                    "metadata": {
-                        "type": "object",
-                        "description": "元数据（标签、重要性等）"
-                    },
-                    "auto_generate_layers": {
-                        "type": "boolean",
-                        "description": "是否自动生成 L0/L1 摘要",
-                        "default": true
+                    "role": {
+                        "type": "string",
+                        "enum": ["user", "assistant", "system"],
+                        "description": "Role of the message sender (default: user)",
+                        "default": "user"
                     }
                 },
-                "required": ["content", "thread_id"]
+                "required": ["content"]
+            }),
+        },
+        ToolDefinition {
+            name: "commit".to_string(),
+            description: include_str!("../docs/commit.md").to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "thread_id": {
+                        "type": "string",
+                        "description": "Thread/session ID to commit (uses default if not specified)"
+                    }
+                }
+            }),
+        },
+        // ==================== Filesystem Tools ====================
+        ToolDefinition {
+            name: "ls".to_string(),
+            description: include_str!("../docs/ls.md").to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "uri": {
+                        "type": "string",
+                        "description": "Directory URI to list (default: cortex://session)",
+                        "default": "cortex://session"
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "Whether to recursively list subdirectories",
+                        "default": false
+                    },
+                    "include_abstracts": {
+                        "type": "boolean",
+                        "description": "Whether to include L0 abstracts for each file",
+                        "default": false
+                    }
+                }
+            }),
+        },
+        // ==================== Tiered Access Tools ====================
+        ToolDefinition {
+            name: "abstract".to_string(),
+            description: "Get L0 abstract layer (~100 tokens) for quick relevance checking.\n\nAbstracts are short summaries ideal for quickly determining if content is relevant before committing to reading more. Use this to minimize token consumption.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "uri": {
+                        "type": "string",
+                        "description": "Content URI (file or directory)"
+                    }
+                },
+                "required": ["uri"]
+            }),
+        },
+        ToolDefinition {
+            name: "overview".to_string(),
+            description: "Get L1 overview layer (~2000 tokens) with core information and context.\n\nOverviews contain key points and contextual information. Use this when the abstract was relevant but you need more details.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "uri": {
+                        "type": "string",
+                        "description": "Content URI (file or directory)"
+                    }
+                },
+                "required": ["uri"]
+            }),
+        },
+        ToolDefinition {
+            name: "content".to_string(),
+            description: "Get L2 full content layer - the complete original content.\n\nUse this ONLY when you need the complete, unprocessed content. This returns the full content which may be large.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "uri": {
+                        "type": "string",
+                        "description": "Content URI (file only)"
+                    }
+                },
+                "required": ["uri"]
+            }),
+        },
+        // ==================== Exploration Tool ====================
+        ToolDefinition {
+            name: "explore".to_string(),
+            description: include_str!("../docs/explore.md").to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Exploration query - what to look for"
+                    },
+                    "start_uri": {
+                        "type": "string",
+                        "description": "Starting URI for exploration",
+                        "default": "cortex://session"
+                    },
+                    "return_layers": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["L0", "L1", "L2"]
+                        },
+                        "description": "Which layers to return in matches",
+                        "default": ["L0"]
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        // ==================== Management Tools ====================
+        ToolDefinition {
+            name: "delete".to_string(),
+            description: "Delete a memory by its URI.\n\nThis removes the memory from both the filesystem and the vector database (all layers: L0, L1, L2).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "uri": {
+                        "type": "string",
+                        "description": "URI of the memory to delete"
+                    }
+                },
+                "required": ["uri"]
+            }),
+        },
+        ToolDefinition {
+            name: "layers".to_string(),
+            description: "Generate L0/L1 layer files for memories.\n\nThis command generates .abstract.md (L0) and .overview.md (L1) files for directories that are missing them.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "thread_id": {
+                        "type": "string",
+                        "description": "Thread/session ID (optional, if not provided, generates for all sessions)"
+                    }
+                }
+            }),
+        },
+        ToolDefinition {
+            name: "index".to_string(),
+            description: "Index memories to vector database.\n\nThis command syncs all memory files to the vector database for semantic search.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "thread_id": {
+                        "type": "string",
+                        "description": "Thread/session ID (optional, if not provided, indexes all files)"
+                    }
+                }
             }),
         },
     ]

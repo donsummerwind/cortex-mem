@@ -811,8 +811,8 @@ impl AgentChatHandler {
                                 StreamedAssistantContent::ToolCall { tool_call, .. } => {
                                     tool_call_count += 1;
                                     let args_str = tool_call.function.arguments.to_string();
-                                    let args_summary = if args_str.len() > 100 {
-                                        format!("{}...", &args_str[..100])
+                                    let args_summary = if args_str.chars().count() > 100 {
+                                        format!("{}...", args_str.chars().take(100).collect::<String>())
                                     } else {
                                         args_str
                                     };

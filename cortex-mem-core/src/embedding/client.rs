@@ -1,50 +1,144 @@
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
+use std::sync::LazyLock;
 
-/// Embedding 速率限制器
+// ── 全局速率限制器注册表 ─────────────────────────────────────────────────────
+
+/// 全局速率限制器注册表
+/// 
+/// 使用 (api_base_url, api_key) 作为 key，确保同一个 embedding 服务
+/// 的所有 EmbeddingClient 实例共享同一个 RateLimiter。
+/// 这解决了多 tenant 场景下每个实例独立限流导致无法协调的问题。
+static GLOBAL_RATE_LIMITERS: LazyLock<RwLock<HashMap<String, Arc<RateLimiter>>>> = 
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// 生成全局 RateLimiter 的 key
+fn make_global_key(api_base_url: &str, api_key: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    api_base_url.hash(&mut hasher);
+    api_key.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
+}
+
+/// 获取或创建全局 RateLimiter
+async fn get_or_create_global_rate_limiter(
+    api_base_url: &str, 
+    api_key: &str, 
+    calls_per_minute: u32
+) -> Arc<RateLimiter> {
+    let key = make_global_key(api_base_url, api_key);
+    
+    // 先尝试读锁获取
+    {
+        let registry = GLOBAL_RATE_LIMITERS.read().await;
+        if let Some(limiter) = registry.get(&key) {
+            return limiter.clone();
+        }
+    }
+    
+    // 需要写锁创建
+    let mut registry = GLOBAL_RATE_LIMITERS.write().await;
+    // 双重检查，避免重复创建
+    if let Some(limiter) = registry.get(&key) {
+        return limiter.clone();
+    }
+    
+    let limiter = Arc::new(RateLimiter::new(calls_per_minute));
+    registry.insert(key, limiter.clone());
+    limiter
+}
+
+// ── Embedding 速率限制器 ─────────────────────────────────────────────────────
 ///
-/// 实现令牌桶算法，保证单并发且每分钟不超过指定次数的 API 调用。
+/// 实现非阻塞的速率限制，使用 CAS 循环确保最小间隔。
+/// 
+/// ## 设计原则
+/// - **不持有锁的同时 sleep**：避免阻塞其他请求
+/// - **CAS 循环更新时间戳**：确保速率限制正确性
+/// - **无阻塞等待**：多个请求可以并行等待，互不影响
+///
 /// 默认基准：30 次/分钟（即每次请求最小间隔 2000ms）。
 pub struct RateLimiter {
-    /// 上次请求完成的时间戳（None 表示尚未发出任何请求）
-    last_request_at: Mutex<Option<Instant>>,
-    /// 每次请求之间的最小间隔
-    min_interval: Duration,
+    /// 下次允许请求的最早时间戳（UNIX 纳秒）
+    next_allowed_nanos: AtomicU64,
+    /// 每次请求之间的最小间隔（纳秒）
+    min_interval_nanos: u64,
 }
 
 impl RateLimiter {
     /// 根据每分钟最大调用次数创建速率限制器
     pub fn new(calls_per_minute: u32) -> Self {
         let calls = calls_per_minute.max(1) as u64;
-        let min_interval_ms = 60_000u64 / calls;
+        let min_interval_nanos = 60_000_000_000u64 / calls; // 纳秒
         Self {
-            last_request_at: Mutex::new(None),
-            min_interval: Duration::from_millis(min_interval_ms),
+            next_allowed_nanos: AtomicU64::new(0),
+            min_interval_nanos,
         }
     }
 
-    /// 等待直到可以安全发出下一次请求（保证单并发）
+    /// 等待直到可以安全发出下一次请求
+    /// 
+    /// 使用 CAS 循环确保：
+    /// 1. 先用 CAS 保留一个时间槽
+    /// 2. 然后等待到该时间槽才返回
+    /// 3. 保证请求之间有最小间隔，避免请求爆发
     pub async fn acquire(&self) {
-        let mut last = self.last_request_at.lock().await;
-        if let Some(t) = *last {
-            let elapsed = t.elapsed();
-            if elapsed < self.min_interval {
-                let wait = self.min_interval - elapsed;
-                debug!("Rate limiter: waiting {:?} before next request", wait);
-                tokio::time::sleep(wait).await;
+        loop {
+            let now_nanos = Self::current_nanos();
+            let next_allowed = self.next_allowed_nanos.load(Ordering::SeqCst);
+            
+            // 计算我们想要保留的时间槽
+            let our_slot = std::cmp::max(now_nanos, next_allowed) + self.min_interval_nanos;
+            
+            // 尝试用 CAS 保留时间槽
+            match self.next_allowed_nanos.compare_exchange(
+                next_allowed,
+                our_slot,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => {
+                    // 成功保留时间槽，等待到该时间
+                    let wait_nanos = our_slot.saturating_sub(now_nanos);
+                    if wait_nanos > 1_000_000 { // > 1ms
+                        let wait = Duration::from_nanos(wait_nanos);
+                        debug!("Rate limiter: acquired slot, waiting {:?}", wait);
+                        tokio::time::sleep(wait).await;
+                    }
+                    return;
+                }
+                Err(_) => {
+                    // 其他请求先更新了，重试（会读取新的 next_allowed）
+                    // 短暂退避避免忙等
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
             }
         }
-        *last = Some(Instant::now());
+    }
+
+    /// 获取当前时间的 UNIX 纳秒
+    fn current_nanos() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64
     }
 
     /// 遇到 429 时额外退避（5 秒）
     pub async fn backoff_on_rate_limit(&self) {
         warn!("Rate limit hit (429), backing off for 5 seconds");
+        // 延后下次允许时间
+        let now_nanos = Self::current_nanos();
+        let new_next = now_nanos + 5_000_000_000u64; // 5 秒
+        self.next_allowed_nanos.store(new_next, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
 }
@@ -75,20 +169,14 @@ impl InnerCache {
         }
     }
 
-    /// 查询缓存；过期则视为缺失
-    fn get(&mut self, key: &str) -> Option<Vec<f32>> {
+    /// 查询缓存（只读，不更新 LRU 顺序）
+    /// 
+    /// 用于高并发场景下的缓存查询，牺牲 LRU 精度换取并发性能。
+    /// 过期条目会在下次写入时被清理。
+    fn peek(&self, key: &str) -> Option<Vec<f32>> {
         if let Some(item) = self.entries.get(key) {
             if item.created_at.elapsed() < self.ttl {
-                // 更新 LRU 顺序
-                if let Some(pos) = self.access_order.iter().position(|k| k == key) {
-                    self.access_order.remove(pos);
-                    self.access_order.push(key.to_string());
-                }
                 return Some(item.embedding.clone());
-            } else {
-                // 已过期，移除
-                self.entries.remove(key);
-                self.access_order.retain(|k| k != key);
             }
         }
         None
@@ -178,8 +266,11 @@ pub struct EmbeddingClient {
 
 impl EmbeddingClient {
     /// 创建新的 EmbeddingClient
+    /// 
+    /// 注意：所有使用相同 API endpoint 和 API key 的 EmbeddingClient 实例
+    /// 会共享同一个全局 RateLimiter，确保跨实例的速率控制正确性。
     pub fn new(config: EmbeddingConfig) -> Result<Self> {
-        let rate_limiter = Arc::new(RateLimiter::new(config.calls_per_minute));
+        let calls_per_minute = config.calls_per_minute;
         let cache = Arc::new(RwLock::new(InnerCache::new(
             config.cache_max_entries,
             config.cache_ttl_secs,
@@ -200,6 +291,40 @@ impl EmbeddingClient {
         Ok(Self {
             config,
             client,
+            rate_limiter: Arc::new(RateLimiter::new(calls_per_minute)),
+            cache,
+        })
+    }
+
+    /// 创建新的 EmbeddingClient（异步版本，使用全局 RateLimiter）
+    /// 
+    /// 推荐使用此方法创建 EmbeddingClient，确保跨实例的速率控制正确性。
+    pub async fn new_with_global_limiter(config: EmbeddingConfig) -> Result<Self> {
+        let rate_limiter = get_or_create_global_rate_limiter(
+            &config.api_base_url,
+            &config.api_key,
+            config.calls_per_minute,
+        ).await;
+        let cache = Arc::new(RwLock::new(InnerCache::new(
+            config.cache_max_entries,
+            config.cache_ttl_secs,
+        )));
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(config.timeout_secs))
+            .build()
+            .map_err(|e| crate::Error::Embedding(format!("Failed to create HTTP client: {}", e)))?;
+
+        info!(
+            "EmbeddingClient initialized (global limiter): model={}, rate_limit={}/min, cache={}entries/{}s",
+            config.model_name,
+            config.calls_per_minute,
+            config.cache_max_entries,
+            config.cache_ttl_secs,
+        );
+
+        Ok(Self {
+            config,
+            client,
             rate_limiter,
             cache,
         })
@@ -207,24 +332,26 @@ impl EmbeddingClient {
 
     /// 嵌入单个文本（带缓存）
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        // 查缓存
         let cache_key = InnerCache::compute_key(&self.config.model_name, text);
+        
+        // 先用 read lock 查询缓存（使用 peek，只读不更新 LRU）
         {
-            let mut cache = self.cache.write().await;
-            if let Some(cached) = cache.get(&cache_key) {
+            let cache = self.cache.read().await;
+            if let Some(cached) = cache.peek(&cache_key) {
                 debug!("Cache hit for text (len={})", text.chars().count());
                 return Ok(cached);
             }
         }
 
-        // 缓存未命中，调用 API（含速率控制）
+        // 缓存未命中，调用 API
+        // 注意：embed_batch_raw 内部已处理速率控制，不再阻塞其他请求
         let results = self.embed_batch_raw(&[text.to_string()]).await?;
         let embedding = results
             .into_iter()
             .next()
             .ok_or_else(|| crate::Error::Embedding("No embedding returned".to_string()))?;
 
-        // 写入缓存
+        // 写入缓存（需要 write lock）
         {
             let mut cache = self.cache.write().await;
             cache.put(cache_key, embedding.clone());
@@ -243,12 +370,12 @@ impl EmbeddingClient {
         let mut miss_texts: Vec<String> = Vec::new();
         let mut miss_indices: Vec<usize> = Vec::new();
 
-        // 1. 批量查缓存
+        // 1. 批量查缓存（使用 read lock + peek，只读不更新 LRU）
         {
-            let mut cache = self.cache.write().await;
+            let cache = self.cache.read().await;
             for (idx, text) in texts.iter().enumerate() {
                 let key = InnerCache::compute_key(&self.config.model_name, text);
-                if let Some(cached) = cache.get(&key) {
+                if let Some(cached) = cache.peek(&key) {
                     results[idx] = Some(cached);
                 } else {
                     miss_texts.push(text.clone());
@@ -268,14 +395,15 @@ impl EmbeddingClient {
             texts.len()
         );
 
-        // 2. 顺序分批调用 API（严格单并发）
+        // 2. 顺序分批调用 API
+        // 注意：embed_batch_raw 内部已处理速率控制，不再阻塞其他请求
         let mut api_results: Vec<Vec<f32>> = Vec::with_capacity(miss_texts.len());
         for chunk in miss_texts.chunks(self.config.batch_size) {
             let embeddings = self.embed_batch_raw(chunk).await?;
             api_results.extend(embeddings);
         }
 
-        // 3. 写入缓存并填充结果
+        // 3. 写入缓存并填充结果（需要 write lock）
         {
             let mut cache = self.cache.write().await;
             for (api_idx, (text, embedding)) in
