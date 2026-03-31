@@ -15,6 +15,195 @@ allowed-tools: store search recall ls explore abstract overview content commit d
 
 This skill enables persistent memory capabilities for AI agents, allowing them to store, search, and recall information across sessions using semantic retrieval.
 
+## Prerequisites Check
+
+Before configuring this skill, verify if `cortex-mem-mcp` is available in your system:
+
+```bash
+# Check if cortex-mem-mcp is in PATH
+which cortex-mem-mcp || where cortex-mem-mcp  # Linux/macOS || Windows
+```
+
+If the command returns a path, the binary is already installed. If not, proceed to the installation section below.
+
+## Installation
+
+### Option 1: Install from crates.io (Recommended)
+
+```bash
+cargo install cortex-mem-mcp
+```
+
+After installation, verify:
+
+```bash
+cortex-mem-mcp --version
+```
+
+### Option 2: Build from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/sopaco/cortex-mem.git
+cd cortex-mem
+
+# Build the release binary
+cargo build --release --bin cortex-mem-mcp
+
+# The binary will be at:
+# ./target/release/cortex-mem-mcp (Linux/macOS)
+# .\target\release\cortex-mem-mcp.exe (Windows)
+```
+
+### Option 3: Download Pre-built Binary
+
+Download the latest release from GitHub:
+
+- **GitHub Releases**: https://github.com/sopaco/cortex-mem/releases
+
+Choose the appropriate binary for your platform:
+- `cortex-mem-mcp-linux-x86_64` (Linux x64)
+- `cortex-mem-mcp-darwin-arm64` (macOS Apple Silicon)
+- `cortex-mem-mcp-darwin-x86_64` (macOS Intel)
+- `cortex-mem-mcp-windows-x86_64.exe` (Windows x64)
+
+## Configuration
+
+### Step 1: Create Configuration File
+
+Create a `config.toml` file (e.g., `~/.config/cortex-mem/config.toml`):
+
+```toml
+[cortex]
+# Data directory for storing memories
+data_dir = "~/.cortex-data"
+
+[llm]
+# LLM API configuration
+api_base_url = "https://api.openai.com/v1"
+api_key = "your-api-key"
+model_efficient = "gpt-4o-mini"
+temperature = 0.1
+max_tokens = 65536
+
+[embedding]
+# Embedding configuration
+api_base_url = "https://api.openai.com/v1"
+api_key = "your-embedding-api-key"
+model_name = "text-embedding-3-small"
+batch_size = 10
+timeout_secs = 30
+
+[qdrant]
+# Vector database configuration
+url = "http://localhost:6333"
+collection_name = "cortex_memories"
+embedding_dim = 1536
+timeout_secs = 30
+```
+
+### Step 2: Start Qdrant (Vector Database)
+
+```bash
+# Using Docker
+docker run -d -p 6333:6333 qdrant/qdrant
+
+# Verify Qdrant is running
+curl http://localhost:6333
+```
+
+### Step 3: Configure MCP Client
+
+Configure your MCP client (e.g., Claude Desktop, Cursor, etc.) to use cortex-mem-mcp.
+
+#### Claude Desktop
+
+Edit the configuration file:
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+Add the following configuration:
+
+```json
+{
+  "mcpServers": {
+    "cortex-memory": {
+      "command": "cortex-mem-mcp",
+      "args": [
+        "--config", "/path/to/config.toml",
+        "--tenant", "default"
+      ],
+      "env": {
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}
+```
+
+If you built from source, use the full path to the binary:
+
+```json
+{
+  "mcpServers": {
+    "cortex-memory": {
+      "command": "/path/to/cortex-mem/target/release/cortex-mem-mcp",
+      "args": [
+        "--config", "/path/to/config.toml",
+        "--tenant", "default"
+      ]
+    }
+  }
+}
+```
+
+#### Cursor IDE
+
+Add to your Cursor MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "cortex-memory": {
+      "command": "cortex-mem-mcp",
+      "args": ["--config", "/path/to/config.toml"]
+    }
+  }
+}
+```
+
+### Step 4: Restart Your MCP Client
+
+After configuration, restart Claude Desktop or your MCP client to load the new server.
+
+### Step 5: Verify Installation
+
+Test the MCP server manually:
+
+```bash
+# Run with debug logging
+RUST_LOG=debug cortex-mem-mcp --config /path/to/config.toml --tenant default
+```
+
+## Command-line Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--config` / `-c` | `config.toml` | Path to configuration file |
+| `--tenant` | `default` | Tenant ID for memory isolation |
+| `--auto-trigger-threshold` | `10` | Message count to auto-trigger memory extraction |
+| `--auto-trigger-interval` | `300` | Min seconds between auto-trigger executions |
+| `--auto-trigger-inactivity` | `120` | Inactivity timeout to trigger extraction |
+| `--no-auto-trigger` | `false` | Disable auto-trigger feature entirely |
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `CORTEX_DATA_DIR` | Override data directory path |
+| `RUST_LOG` | Logging level (debug, info, warn, error) |
+
 ## When to Use This Skill
 
 Use this skill when you need to:
