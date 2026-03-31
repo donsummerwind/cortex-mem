@@ -2,8 +2,8 @@
 
 **Module:** `cortex-mem-core/src/search/vector_engine.rs`  
 **Domain:** Core Business Domain  
-**Version:** 1.0  
-**Last Updated:** 2026-02-19 04:06:14 (UTC)
+**Version:** 1.1  
+**Last Updated:** 2026-03-30 (UTC)
 
 ---
 
@@ -16,6 +16,7 @@ The **Search Engine Domain** implements an intelligent, multi-layered semantic s
 - **Scalable Architecture**: Handles large memory corpora through progressive refinement (L0→L1→L2)
 - **Adaptive Intelligence**: Dynamically adjusts search strategies based on query intent and result quality
 - **Multi-Tenancy Support**: Enforces data isolation while maintaining search performance across tenants
+- **Enhanced Recall**: Multi-path retrieval with heuristic fallback when LLM is unavailable
 
 ---
 
@@ -23,25 +24,28 @@ The **Search Engine Domain** implements an intelligent, multi-layered semantic s
 
 ### 2.1 High-Level Architecture
 
-The Search Engine implements a **three-tier retrieval pattern** with weighted aggregation, designed to balance computational efficiency with search precision:
+The Search Engine implements a **three-tier retrieval pattern** with weighted aggregation, enhanced by **multi-path retrieval** and **intelligent reranking**:
 
 ```mermaid
 graph TD
     A[User Query] --> B[Intent Analysis]
     B --> C{LLM Available?}
-    C -->|Yes| D[Query Rewriting]
-    C -->|No| E[Original Query]
-    D --> F[Embedding Generation]
-    E --> F
-    F --> G[L0 Abstract Search<br/>Coarse Filtering]
-    G --> H{Results Found?}
-    H -->|No| I[Degradation Strategy<br/>Threshold Reduction]
-    H -->|Yes| J[L1 Overview Search<br/>Context Refinement]
-    I --> G
-    J --> K[L2 Detail Search<br/>Precise Matching]
-    K --> L[Weighted Scoring<br/>0.2L0+0.3L1+0.5L2]
-    L --> M[Ranking & Snippet Extraction]
-    M --> N[Final Results]
+    C -->|Yes| D[LLM Query Rewriting]
+    C -->|No| E[Heuristic Fallback<br/>Intent Classification]
+    D --> F[Expanded Query<br/>max 150 chars]
+    E --> G[Rule-based Query Rewrite]
+    F --> H[Embedding Generation]
+    G --> H
+    H --> I[L0 Abstract Search<br/>Lowered Thresholds]
+    I --> J{Results Found?}
+    J -->|No| K[Degradation Strategy<br/>Threshold Reduction]
+    J -->|Yes| L[L1 Overview Search<br/>Context Refinement]
+    K --> I
+    L --> M[L2 Detail Search<br/>Precise Matching]
+    M --> N[Weighted Scoring<br/>L2+0.08, L1-0.04, L0-0.08]
+    N --> O[Reranking & Deduplication]
+    O --> P[Intent-Path Bonus Scoring]
+    P --> Q[Final Results]
 ```
 
 ### 2.2 Core Components
@@ -51,7 +55,9 @@ graph TD
 | **Vector Search Engine** | Orchestrates layered retrieval and scoring | Rust, Async/Await, Tokio |
 | **Embedding Client** | Generates dense vector representations | OpenAI-compatible APIs |
 | **Qdrant Vector Store** | Persistence and similarity search | Qdrant (gRPC/HTTP) |
-| **Intent Detector** | Classifies query types for adaptive thresholding | Pattern matching, Heuristics |
+| **Intent Detector** | Classifies query types for adaptive thresholding | LLM + Heuristic fallback |
+| **Query Rewriter** | Expands queries with synonyms and related terms | LLM / Rule-based |
+| **Reranker** | Post-retrieval scoring adjustments | Keyword hits, URI path analysis |
 | **Layer Manager** | Provides L0/L1 summary access | Filesystem + LLM caching |
 | **Snippet Extractor** | Generates contextual text windows | String processing, Regex |
 
@@ -94,22 +100,75 @@ Combined Score = (0.2 × L0_Score) + (0.3 × L1_Score) + (0.5 × L2_Score)
 
 The engine classifies incoming queries into five intent categories to optimize retrieval parameters:
 
-| Intent Type | Characteristics | Adaptive Threshold | Use Case |
-|-------------|----------------|-------------------|----------|
-| **Factual** | "What is...", "When did..." | 0.4 | Entity lookup, specific facts |
-| **Search** | "Find...", "Look for..." | 0.5 | General content discovery |
-| **Relational** | "How is X related to Y" | 0.5 | Connection analysis |
-| **Temporal** | "Last week...", "Yesterday..." | 0.5 | Time-bound retrieval |
-| **General** | Open-ended questions | 0.5 | Broad exploration |
+| Intent Type | Characteristics | Adaptive L0 Threshold | Use Case |
+|-------------|----------------|----------------------|----------|
+| **EntityLookup** | "Who is...", short names | 0.28 | Entity lookup, person identification |
+| **Factual** | "What did X research", "What is X's job" | 0.32 | Personal fact queries |
+| **Search** | "Find...", "What activities", "What hobbies" | 0.35 | Content discovery, list operations |
+| **Temporal** | "When...", "Yesterday...", "What date" | 0.38 | Time-bound retrieval |
+| **Relational** | "Relationship status", "How is X related to Y" | 0.35 | Connection analysis |
+| **General** | Open-ended questions | 0.45 | Broad exploration |
 
-**Implementation Note**: Thresholds adjust dynamically; factual queries use lower thresholds (0.4) to ensure recall of specific entities, while general queries maintain higher precision (0.5).
+**Implementation Note**: Thresholds have been lowered to improve recall for specific entity and fact queries. EntityLookup uses the lowest threshold (0.28) to ensure candidate coverage even when L0 summaries lack entity details.
 
-### 4.2 Query Enhancement (Optional)
+### 4.2 Dual-Path Intent Analysis
 
-When an LLM client is available, the engine performs **query rewriting** to expand or disambiguate user input:
-- **Synonym Expansion**: Adding semantically related terms
-- **Context Enrichment**: Incorporating user/agent profile context
-- **Disambiguation**: Clarifying ambiguous pronouns or references
+The system implements a **fallback chain** for intent analysis:
+
+#### 4.2.1 LLM-Based Intent Analysis (Primary)
+When LLM is available and `enable_intent_analysis` is true:
+- Single LLM call extracts: `rewritten_query`, `keywords`, `entities`, `intent_type`, `time_constraint`
+- Query rewriting expands to max 150 characters with synonyms and related concepts
+- Intent-specific expansion patterns (e.g., temporal queries add "timeline/event/date/time")
+
+#### 4.2.2 Heuristic Fallback Intent Analysis
+When LLM is unavailable, the engine uses rule-based classification:
+
+```rust
+fn fallback_intent(query: &str) -> EnhancedQueryIntent {
+    let query_lower = query.to_lowercase();
+    
+    // Temporal detection
+    if contains_any(&query_lower, &["when", "date", "time", "before", "after", 
+                                      "昨天", "什么时候", "哪天"]) {
+        QueryIntentType::Temporal
+    }
+    // Relational detection  
+    else if contains_any(&query_lower, &["relationship", "friend", "partner", 
+                                          "family", "support", "关系", "支持"]) {
+        QueryIntentType::Relational
+    }
+    // Search/List detection
+    else if contains_any(&query_lower, &["list", "find", "search", "show",
+                                          "activities", "hobbies", "哪些", "列出"]) {
+        QueryIntentType::Search
+    }
+    // Entity lookup detection
+    else if contains_any(&query_lower, &["who is", "what is", "identity",
+                                          "background", "是谁", "身份"]) {
+        QueryIntentType::EntityLookup
+    }
+    else {
+        QueryIntentType::Factual
+    }
+}
+```
+
+### 4.3 Query Rewriting Strategies
+
+Query rewriting applies intent-specific expansion patterns:
+
+| Intent Type | Expansion Terms |
+|-------------|----------------|
+| **EntityLookup** | + "identity", "background", "profile", "personal info" |
+| **Factual** | + "fact", "details", "context" |
+| **Temporal** | + "timeline", "event", "date", "time" |
+| **Relational** | + "relationship", "friend", "support", "connection" |
+| **Search** | + "search", "relevant", "memory" |
+
+**Example**:
+- Input: "When did pottery class"
+- Rewritten: "When did pottery class date time event timeline timestamp when pottery class signup enrolled date schedule July"
 
 ### 4.3 Vector Generation
 
@@ -149,6 +208,93 @@ Results are post-filtered based on:
 - **Temporal Bounds**: `created_at` range filtering
 - **Entity Constraints**: Specific participant or dimension filtering
 - **URI Prefix Scoping**: Limiting search to specific memory dimensions (user/agent/session)
+
+### 6.3 Layer-Based Score Adjustment
+
+After initial retrieval, scores are adjusted based on layer type:
+
+| Layer | Score Adjustment | Rationale |
+|-------|------------------|-----------|
+| **L2 (Detail)** | +0.08 | Most precise content deserves boost |
+| **L1 (Overview)** | -0.04 | Summaries may miss specifics |
+| **L0 (Abstract)** | -0.08 | Coarse summaries need penalty |
+
+### 6.4 Reranking Pipeline
+
+The engine applies a multi-factor reranking algorithm to improve relevance:
+
+```rust
+fn rerank_results(results: &mut Vec<SearchResult>, intent: &EnhancedQueryIntent) {
+    for result in results.iter_mut() {
+        let uri_lower = result.uri.to_lowercase();
+        let snippet_lower = result.snippet.to_lowercase();
+        
+        // Base adjustment for URI type
+        let mut bonus = if is_leaf_uri(&result.uri) { 0.12 } else { -0.12 };
+        if is_summary_uri(&result.uri) { bonus -= 0.12; }
+        
+        // Keyword and entity hit bonuses
+        let keyword_hits = count_keyword_hits(&snippet_lower, &intent.keywords);
+        let entity_hits = count_entity_hits(&snippet_lower, &intent.entities);
+        bonus += keyword_hits.min(4.0) * 0.03;
+        bonus += entity_hits.min(3.0) * 0.05;
+        
+        // Collection summary penalty
+        bonus += collection_summary_penalty(&uri_lower);
+        
+        // Intent-specific path bonus
+        bonus += intent_path_bonus(&intent.intent_type, &uri_lower);
+        
+        result.score += bonus;
+    }
+    
+    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+}
+```
+
+### 6.5 Intent-Based Path Bonuses
+
+Different intent types receive bonuses for specific URI paths:
+
+| Intent Type | Path Pattern | Bonus |
+|-------------|--------------|-------|
+| **EntityLookup** | `/personal_info/` | +0.30 |
+| **EntityLookup** | `/events/` | +0.12 |
+| **EntityLookup** | `/entities/` | -0.14 |
+| **Temporal** | `/events/` or `/timeline/` | +0.06 |
+| **Relational** | `/relationships/` | +0.16 |
+| **Search** | `/events/` | +0.12 |
+| **Search** | `/preferences/` | +0.08 |
+
+### 6.6 Deduplication
+
+Results are deduplicated by canonical URI:
+
+```rust
+fn dedup_results(results: &mut Vec<SearchResult>) {
+    let mut merged: HashMap<String, SearchResult> = HashMap::new();
+    
+    for result in results.drain(..) {
+        let canonical_uri = canonicalize_uri(&result.uri);
+        match merged.get_mut(&canonical_uri) {
+            Some(existing) => {
+                if result.score > existing.score {
+                    *existing = result;
+                }
+            }
+            None => { merged.insert(canonical_uri, result); }
+        }
+    }
+    
+    *results = merged.into_values().collect();
+    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+}
+```
+
+**URI Canonicalization**:
+- `.abstract.md` suffix → directory URI
+- `.overview.md` suffix → directory URI
+- Ensures same content doesn't appear multiple times
 
 ---
 

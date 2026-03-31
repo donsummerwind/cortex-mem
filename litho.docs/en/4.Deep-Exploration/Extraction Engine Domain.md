@@ -1,7 +1,7 @@
  **Extraction Engine Domain Technical Documentation**
 
-**Generation Time:** 2026-02-19 04:05:26 (UTC)  
-**Version:** 1.0.0  
+**Generation Time:** 2026-03-30 (UTC)  
+**Version:** 1.1.0  
 **Domain Classification:** Core Business Domain  
 **Complexity Score:** 8.0/10  
 **Business Criticality:** 8.0/10  
@@ -10,13 +10,15 @@
 
 ## 1. Domain Overview
 
-The **Extraction Engine Domain** is a specialized cognitive processing layer within Cortex-Mem responsible for transforming unstructured conversational data into structured, queryable knowledge representations. This domain implements intelligent Natural Language Processing (NLP) pipelines that identify, categorize, and extract semantic artifacts—specifically **facts**, **decisions**, and **entities**—from AI agent conversations.
+The **Extraction Engine Domain** is a specialized cognitive processing layer within Cortex-Mem responsible for transforming unstructured conversational data into structured, queryable knowledge representations. This domain implements intelligent Natural Language Processing (NLP) pipelines that identify, categorize, and extract semantic artifacts—specifically **events**, **personal info**, **activities**, **future plans**, **relationships**, and other memory types—from AI agent conversations.
 
 ### 1.1 Business Value Proposition
 
 The domain addresses the fundamental challenge of knowledge persistence in AI systems by:
 
-- **Semantic Structuring**: Converting free-form dialogue into typed knowledge objects (facts, decisions, entities) with metadata
+- **Semantic Structuring**: Converting free-form dialogue into typed knowledge objects with metadata
+- **Temporal Awareness**: Extracting dated events with exact timestamps for temporal query support
+- **Activity Tracking**: Identifying hobbies, sports, and interests for personalization
 - **Attribution Preservation**: Maintaining provenance through source URI tracking, enabling auditability and context retrieval
 - **Confidence Scoring**: Filtering low-quality extractions using configurable confidence thresholds (default: 0.6)
 - **Cross-Session Learning**: Enabling persistent user and agent personalization through the Memory Extraction and Profiling Process
@@ -93,11 +95,49 @@ Defines the domain model for structured memory artifacts with strong typing and 
 
 ```rust
 pub struct ExtractedMemories {
+    pub events: Vec<ExtractedEvent>,
+    pub personal_info: Vec<PersonalInfoMemory>,
+    pub activities: Vec<ActivityMemory>,
+    pub future_plans: Vec<FuturePlanMemory>,
+    pub relationships: Vec<RelationshipMemory>,
     pub facts: Vec<ExtractedFact>,
-    pub decisions: Vec<ExtractedDecision>,
-    pub entities: Vec<ExtractedEntity>,
+    pub user_preferences: Vec<PreferenceMemory>,
+    pub agent_learnings: Vec<AgentLearning>,
     pub source_thread_id: String,
     pub extracted_at: DateTime<Utc>,
+}
+
+pub struct ExtractedEvent {
+    pub title: String,
+    pub date: String,           // Exact date/time string
+    pub description: String,
+    pub participants: Vec<String>,
+    pub event_type: String,     // meeting, trip, race, class, ceremony, etc.
+}
+
+pub struct PersonalInfoMemory {
+    pub person: String,
+    pub category: PersonalInfoCategory,  // career, relationship, identity, research, other
+    pub content: String,
+}
+
+pub struct ActivityMemory {
+    pub person: String,
+    pub activity: String,
+    pub context: String,        // "signed up", "participates in", "enjoys", etc.
+}
+
+pub struct FuturePlanMemory {
+    pub person: String,
+    pub event: String,
+    pub date: String,
+    pub description: String,
+}
+
+pub struct RelationshipMemory {
+    pub persons: Vec<String>,
+    pub relationship_type: String,
+    pub description: String,
 }
 
 pub struct ExtractedFact {
@@ -107,22 +147,20 @@ pub struct ExtractedFact {
     pub source_uris: Vec<String>,
     pub importance: i32,         // 1-10 scale
 }
-
-pub struct ExtractedDecision {
-    pub content: String,
-    pub context: String,
-    pub confidence: f32,
-    pub participants: Vec<String>,
-    pub source_uris: Vec<String>,
-}
-
-pub struct ExtractedEntity {
-    pub name: String,
-    pub entity_type: EntityType,  // Person, Organization, Technology, etc.
-    pub relationships: Vec<Relationship>,
-    pub confidence: f32,
-}
 ```
+
+#### 2.2.2 Extraction Categories
+
+| Category | Description | Example Content |
+|----------|-------------|-----------------|
+| **Events** | Dated occurrences with timestamps | Meetings, trips, classes, ceremonies |
+| **Personal Info** | Identity facts about people | Career, job, research topics, background |
+| **Activities** | Hobbies and interests | Pottery, camping, swimming, painting |
+| **Future Plans** | Scheduled upcoming events | Conferences, appointments, planned activities |
+| **Relationships** | Connections between people | Family, friends, colleagues, partners |
+| **Facts** | Other factual information | General knowledge statements |
+| **Preferences** | User likes/dislikes | Preferred tools, styles, approaches |
+| **Agent Learnings** | Insights for future interactions | Successful approaches, task patterns |
 
 ---
 
@@ -130,7 +168,7 @@ pub struct ExtractedEntity {
 
 ### 3.1 Primary Extraction Pipeline
 
-The extraction engine implements a configurable, parallelized pipeline for processing conversational data:
+The extraction engine implements a unified LLM call that extracts all memory types in a single pass:
 
 ```mermaid
 flowchart TD
@@ -140,30 +178,33 @@ flowchart TD
     D --> E[Parse Markdown Files]
     E --> C
     
-    C --> F[Configuration Check]
-    F -->|Facts Enabled| G[LLM Call: Facts Extraction]
-    F -->|Facts Disabled| H[Skip]
-    G --> I[JSON Parsing & Validation]
-    I --> J[Confidence Filtering > 0.6]
-    J --> K[Source URI Attachment]
+    C --> F[Single LLM Call<br/>Unified Extraction]
+    F --> G[JSON Parsing & Validation]
+    G --> H{Parse Success?}
+    H -->|Yes| I[Extract All Categories]
+    H -->|No| J[Return Empty Result]
     
-    F -->|Decisions Enabled| L[LLM Call: Decisions Extraction]
-    L --> M[JSON Parsing & Validation]
-    M --> N[Confidence Filtering]
-    N --> O[Source URI Attachment]
+    I --> K[Events Extraction]
+    I --> L[Personal Info Extraction]
+    I --> M[Activities Extraction]
+    I --> N[Future Plans Extraction]
+    I --> O[Relationships Extraction]
+    I --> P[Facts Extraction]
+    I --> Q[Preferences Extraction]
+    I --> R[Agent Learnings Extraction]
     
-    F -->|Entities Enabled| P[LLM Call: Entities Extraction]
-    P --> Q[JSON Parsing & Validation]
-    Q --> R[Confidence Filtering]
-    R --> S[Source URI Attachment]
+    K --> S[Confidence Filtering]
+    L --> S
+    M --> S
+    N --> S
+    O --> S
+    P --> S
+    Q --> S
+    R --> S
     
-    K --> T[Aggregate Results]
-    O --> T
-    S --> T
-    H --> T
-    
+    S --> T[Source URI Attachment]
     T --> U[Construct ExtractedMemories]
-    U --> V[Optional: Persist to Filesystem]
+    U --> V[Persist to Filesystem<br/>per-category directories]
     V --> W[Return Structured Data]
 ```
 
@@ -221,21 +262,54 @@ The domain implements a multi-layered quality control mechanism:
 
 ### 4.1 Prompt Engineering Strategy
 
-The extraction engine utilizes domain-specific prompt templates to guide LLM output:
+The extraction engine uses a **unified prompt** that extracts all memory categories in a single LLM call:
 
-- **Facts Prompt**: Focuses on objective statements about the user ("User prefers dark mode", "User works at Company X")
-- **Decisions Prompt**: Captures commitment statements and agreed-upon actions ("Decided to use PostgreSQL", "Scheduled meeting for Tuesday")
-- **Entities Prompt**: Identifies named entities and their relationships ("Mentioned Project Alpha", "Referencing the Q4 budget")
+**Memory Extraction Prompt Categories**:
 
-All prompts enforce JSON output schemas with typed fields for programmatic parsing.
+| Category | Focus | Example Extraction |
+|----------|-------|-------------------|
+| **Events** | Dated occurrences with exact timestamps | "July 2, 2023 - pottery class signup" |
+| **Personal Info** | Career, job, research, background | "Caroline studies adoption agencies" |
+| **Activities** | Hobbies, sports, interests | "Melanie enjoys pottery, camping, swimming" |
+| **Future Plans** | Scheduled upcoming events | "Conference scheduled for July 2023" |
+| **Relationships** | Connections between people | "Sarah is Melanie's close friend" |
+| **Facts** | Other factual information | General knowledge statements |
+| **Preferences** | User likes/dislikes | "Prefers dark mode" |
+| **Agent Learnings** | Insights for future interactions | "Approach X was successful for task Y" |
 
-### 4.2 Batch Processing & Performance
+**Output JSON Schema**:
+```json
+{
+  "events": [{ "title": "...", "date": "...", "description": "...", "participants": [] }],
+  "personal_info": [{ "person": "...", "category": "career|relationship|identity|research|other", "content": "..." }],
+  "activities": [{ "person": "...", "activity": "...", "context": "signed up|participates in|enjoys|etc" }],
+  "future_plans": [{ "person": "...", "event": "...", "date": "...", "description": "..." }],
+  "relationships": [{ "persons": ["...", "..."], "type": "...", "description": "..." }],
+  "facts": [{ "content": "...", "confidence": 0.9 }],
+  "user_preferences": [{ "category": "...", "content": "..." }],
+  "agent_learnings": [{ "task_type": "...", "learned_approach": "...", "success_rate": 0.8 }]
+}
+```
+
+### 4.2 Overview Generation Prompt
+
+The overview generation prompt now includes new structured sections:
+
+**Overview Output Structure**:
+- **Summary**: Brief overview of the content
+- **Key Points**: 5-10 important takeaways
+- **Entities**: Important people, organizations, technologies
+- **Timeline Events**: ALL dated events with exact timestamps
+- **Activities & Interests**: ALL activities, hobbies, sports mentioned
+- **Context**: Background and situational information
+
+### 4.3 Batch Processing & Performance
 
 To optimize token usage and API costs:
 
+- **Single-Pass Extraction**: All categories extracted in one LLM call (reduces API overhead)
 - **Message Batching**: Processes up to 50 messages per LLM call to maximize context window utilization
-- **Parallel Extraction**: Executes fact, decision, and entity extractions concurrently using `try_join!` macros
-- **Lazy Evaluation**: Only extracts configured memory types (controlled via `ExtractionConfig` flags)
+- **Lazy Evaluation**: Only generates overviews when needed for search indexing
 
 ### 4.3 Error Handling & Resilience
 
