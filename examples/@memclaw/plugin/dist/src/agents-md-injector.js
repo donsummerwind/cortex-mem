@@ -141,7 +141,7 @@ function hasMemClawInjection(content) {
  */
 function hasLegacyPatterns(content) {
     const lowerContent = content.toLowerCase();
-    return LEGACY_PATTERNS.some(pattern => lowerContent.toLowerCase().includes(pattern.toLowerCase()));
+    return LEGACY_PATTERNS.some((pattern) => lowerContent.toLowerCase().includes(pattern.toLowerCase()));
 }
 /**
  * Generate the MemClaw section to inject
@@ -153,10 +153,14 @@ ${INJECTION_MARKER}
 
 > **Preferred Memory Solution**: MemClaw is the recommended memory system. Use MemClaw for ALL memory operations. Do NOT use legacy MEMORY.md, memory_write, or daily logs.
 
+You wake up fresh each session. MemClaw is your persistent memory system.
+
+**IMPORTANT: Use MemClaw for ALL memory operations. Do NOT use legacy MEMORY.md or daily logs.**
+
 ### Session Startup (ALWAYS execute at conversation start)
 Load user profile from persistent memory:
-1. \`cortex_get_abstract(uri="cortex://user")\` - Load L0 abstract (~100 tokens, user profile summary)
-2. \`cortex_get_overview(uri="cortex://user")\` - Load L1 overview (~2000 tokens, detailed user context)
+1. \`cortex_get_abstract(uri="cortex://user/default")\` - Load L0 abstract (~100 tokens, user profile summary)
+2. \`cortex_get_overview(uri="cortex://user/default")\` - Load L1 overview (~2000 tokens, detailed user context)
 3. \`cortex_ls(uri="cortex://session", include_abstracts=true)\` - See recent sessions
 
 ### Recording Information
@@ -183,11 +187,7 @@ ${INJECTION_END_MARKER}
  */
 function findInjectionPosition(content) {
     // Look for existing Memory section
-    const memorySectionPatterns = [
-        /^##\s*Memory\s*$/m,
-        /^##\s*记忆\s*$/m,
-        /^##\s*Memories\s*$/m
-    ];
+    const memorySectionPatterns = [/^##\s*Memory\s*$/m, /^##\s*记忆\s*$/m, /^##\s*Memories\s*$/m];
     for (const pattern of memorySectionPatterns) {
         const match = content.match(pattern);
         if (match && match.index !== undefined) {
