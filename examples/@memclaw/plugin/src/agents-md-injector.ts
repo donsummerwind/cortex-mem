@@ -30,7 +30,13 @@ const OPENCLAW_CONFIG_FILE = 'openclaw.json';
 
 export interface InjectionResult {
 	injected: boolean;
-	reason: 'success' | 'already_injected' | 'no_agents_md' | 'no_legacy_patterns' | 'disabled' | 'error';
+	reason:
+		| 'success'
+		| 'already_injected'
+		| 'no_agents_md'
+		| 'no_legacy_patterns'
+		| 'disabled'
+		| 'error';
 	path?: string;
 	error?: string;
 }
@@ -129,7 +135,9 @@ export function hasMemClawInjection(content: string): boolean {
  */
 export function hasLegacyPatterns(content: string): boolean {
 	const lowerContent = content.toLowerCase();
-	return LEGACY_PATTERNS.some(pattern => lowerContent.toLowerCase().includes(pattern.toLowerCase()));
+	return LEGACY_PATTERNS.some((pattern) =>
+		lowerContent.toLowerCase().includes(pattern.toLowerCase())
+	);
 }
 
 /**
@@ -141,6 +149,10 @@ ${INJECTION_MARKER}
 ## Memory (MemClaw)
 
 > **Preferred Memory Solution**: MemClaw is the recommended memory system. Use MemClaw for ALL memory operations. Do NOT use legacy MEMORY.md, memory_write, or daily logs.
+
+You wake up fresh each session. MemClaw is your persistent memory system.
+
+**IMPORTANT: Use MemClaw for ALL memory operations. Do NOT use legacy MEMORY.md or daily logs.**
 
 ### Session Startup (ALWAYS execute at conversation start)
 Load user profile from persistent memory:
@@ -173,11 +185,7 @@ ${INJECTION_END_MARKER}
  */
 function findInjectionPosition(content: string): number {
 	// Look for existing Memory section
-	const memorySectionPatterns = [
-		/^##\s*Memory\s*$/m,
-		/^##\s*记忆\s*$/m,
-		/^##\s*Memories\s*$/m
-	];
+	const memorySectionPatterns = [/^##\s*Memory\s*$/m, /^##\s*记忆\s*$/m, /^##\s*Memories\s*$/m];
 
 	for (const pattern of memorySectionPatterns) {
 		const match = content.match(pattern);
@@ -185,7 +193,7 @@ function findInjectionPosition(content: string): number {
 			// Find the end of this section (next ## or end of file)
 			const afterSection = content.substring(match.index);
 			const nextSectionMatch = afterSection.substring(1).match(/^##\s/m);
-			
+
 			if (nextSectionMatch && nextSectionMatch.index !== undefined) {
 				// Replace the entire old Memory section
 				return match.index;
@@ -234,20 +242,20 @@ function removeExistingMemorySection(content: string): string {
 export function injectMemClawSection(content: string): string {
 	// Remove existing Memory section first
 	const cleanedContent = removeExistingMemorySection(content);
-	
+
 	// Find injection position (now should be at end since we removed Memory section)
 	const injectionPos = findInjectionPosition(cleanedContent);
-	
+
 	// Insert MemClaw section
 	const memclawSection = generateMemClawSection();
-	
+
 	const before = cleanedContent.substring(0, injectionPos);
 	const after = cleanedContent.substring(injectionPos);
-	
+
 	// Ensure proper spacing
 	const needsNewline = before.length > 0 && !before.endsWith('\n');
 	const prefix = needsNewline ? '\n' : '';
-	
+
 	return before + prefix + memclawSection + after;
 }
 
@@ -332,4 +340,3 @@ export function ensureAgentsMdEnhanced(
 		return { injected: false, reason: 'error', error: errorMsg };
 	}
 }
-

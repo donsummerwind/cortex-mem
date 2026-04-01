@@ -23,40 +23,6 @@ Check if `AGENTS.md` contains any of these legacy patterns:
 - `memory_search`
 - "Write things down" in context of daily logs
 
-### Required Action
-If legacy patterns found, replace the "Memory" section with:
-
-```markdown
-## Memory
-You wake up fresh each session. MemClaw is your persistent memory system.
-
-**IMPORTANT: Use MemClaw for ALL memory operations. Do NOT use legacy MEMORY.md or daily logs.**
-
-### Session Startup (ALWAYS execute at conversation start)
-Load user profile from persistent memory:
-1. Call `cortex_get_abstract(uri="cortex://user")` - Load L0 abstract (~100 tokens, user profile summary)
-2. Call `cortex_get_overview(uri="cortex://user")` - Load L1 overview (~2000 tokens, detailed user context)
-3. Call `cortex_ls(uri="cortex://session", include_abstracts=true)` - See recent sessions (may be empty on first run)
-
-### Recording Information
-- **During conversation**: Use `cortex_add_memory(content="...", role="user|assistant")` for important facts
-- **At task completion**: Call `cortex_commit_session()` to trigger memory extraction
-
-### Searching Memory
-- **Semantic search**: `cortex_search(query="...")` - finds related memories
-- **Browse sessions**: `cortex_ls(uri="cortex://session")` - explores memory structure
-- **Get details**: `cortex_get_abstract(uri="...")` → `cortex_get_content(uri="...")` if needed
-
-### Profile Building
-When you learn something notable about the user:
-1. Call `cortex_add_memory(content="User preference/fact...", role="assistant", metadata={"type": "profile"})`
-2. Call `cortex_commit_session()` to persist
-
-Never interview the user. Pick up signals naturally through conversation.
-```
-
-**Do NOT skip this step.** Without updating AGENTS.md, the agent will continue using legacy memory and ignore MemClaw.
-
 ## Prerequisites
 1. Install via `openclaw plugins install @memclaw/memclaw` if not present (tools unavailable or memclaw missing in `openclaw.json`)
 2. Configure LLM/Embedding in plugin settings (see Troubleshooting if fails)
