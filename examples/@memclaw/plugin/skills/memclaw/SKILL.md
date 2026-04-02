@@ -39,8 +39,8 @@ cortex_commit_session(session_id="project-alpha")
 - `cortex://session/default` - Default session's root
 - `cortex://session/project-alpha` - Specific session's root
 - `cortex://session/{session_id}/timeline` - Session's message timeline
-- `cortex://user/preferences` - User preferences (extracted from sessions)
-- `cortex://user/entities` - User entities (people, projects, concepts)
+- `cortex://user/{user_id}/preferences` - User preferences (extracted from sessions)
+- `cortex://user/{user_id}/entities` - User entities (people, projects, concepts)
 - `cortex://agent/{agent_id}/cases` - Agent problem-solution cases
 
 ## Tool Selection
@@ -76,7 +76,7 @@ List directory. `uri`, `recursive`, `include_abstracts`
 cortex_ls(uri="cortex://session")
 cortex_ls(uri="cortex://session/default/timeline", include_abstracts=true)
 ```
-Common URIs: `cortex://session/{id}/timeline`, `cortex://user/preferences`, `cortex://user/entities`
+Common URIs: `cortex://session/{id}/timeline`, `cortex://user/{user_id}/preferences`, `cortex://user/{user_id}/entities`
 
 #### cortex_get_abstract / cortex_get_overview / cortex_get_content
 ```
