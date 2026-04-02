@@ -51,21 +51,33 @@ cortex_commit_session(session_id="project-alpha")
 | NO | YES | `cortex_search` |
 | NO | NO | `cortex_explore` |
 
+**Quick Scope Guide:**
+- Not sure where info is? → **Omit scope** (searches all dimensions)
+- Need user preferences/background? → `scope="cortex://user/default"`
+
 ## Core Tools
 
 ### Search & Recall
 
 #### cortex_search
 Layered search with `return_layers`: `["L0"]` (default), `["L0","L1"]`, `["L0","L1","L2"]`
+
+**Scope parameter** (optional):
+- **Omit scope** → search ALL memories (recommended for most cases)
+- `scope="cortex://user/default"` → search user profile, preferences, entities
+
 ```
-cortex_search(query="project decisions", return_layers=["L0"])
-cortex_search(query="API design", return_layers=["L0","L1"])
+# Recommended: search all memories
+cortex_search(query="project decisions")
+
+# Search user profile/preferences
+cortex_search(query="user preferences", scope="cortex://user/default")
 ```
 
 #### cortex_recall
-Quick recall (L0+L2). Equivalent to `cortex_search(return_layers=["L0","L2"])`
+Quick recall (L0+L2). Same as `cortex_search(return_layers=["L0","L2"])`
 ```
-cortex_recall(query="user preferences")
+cortex_recall(query="previous discussions")
 ```
 
 ### Browse & Access

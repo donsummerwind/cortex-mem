@@ -165,9 +165,11 @@ Load user profile from persistent memory:
 - **At task completion**: Call \`cortex_commit_session()\` to trigger memory extraction
 
 ### Searching Memory
-- **Semantic search**: \`cortex_search(query="...")\` - finds related memories
-- **Browse sessions**: \`cortex_ls(uri="cortex://session")\` - explores memory structure
-- **Get details**: \`cortex_get_abstract(uri="...")\` → \`cortex_get_content(uri="...")\` if needed
+- **General search**: \`cortex_search(query="...")\` - searches ALL memories (recommended)
+- **User profile**: \`cortex_search(query="...", scope="cortex://user/default")\` - user preferences, entities
+- **Browse**: \`cortex_ls(uri="cortex://session")\` - explore memory structure
+
+**Tip**: Omit scope for most searches. Only use \`scope="cortex://user/default"\` when specifically looking for user profile data.
 
 ### Profile Building
 When you learn something notable about the user:

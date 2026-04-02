@@ -14,13 +14,22 @@ class CortexMemClient {
     // ==================== Search ====================
     /**
      * Layered semantic search with L0/L1/L2 tiered retrieval
+     *
+     * @param options.scope - URI prefix to limit search scope:
+     *   - "cortex://session/abc" - search within a specific session
+     *   - "cortex://user/default" - search user memories
+     *   - "cortex://agent/claw/cases" - search agent cases
+     *   - Omit to search across all dimensions
      */
     async search(options) {
+        // Convert scope to root_uri for backend API
+        // Backend expects root_uri parameter for URI prefix filtering
+        const scope = options.scope;
         const response = await this.fetchJson('/api/v2/search', {
             method: 'POST',
             body: JSON.stringify({
                 query: options.query,
-                thread: options.thread,
+                thread: scope, // Backend still accepts thread for backward compatibility
                 limit: options.limit ?? 10,
                 min_score: options.min_score ?? 0.6,
                 return_layers: options.return_layers ?? ['L0']
@@ -34,10 +43,10 @@ class CortexMemClient {
     /**
      * Recall memories with more context (L0 + L2)
      */
-    async recall(query, thread, limit = 10) {
+    async recall(query, scope, limit = 10) {
         return this.search({
             query,
-            thread,
+            scope,
             limit,
             return_layers: ['L0', 'L2']
         });

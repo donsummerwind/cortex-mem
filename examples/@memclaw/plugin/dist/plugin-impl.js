@@ -21,19 +21,19 @@ const agents_md_injector_js_1 = require("./src/agents-md-injector.js");
 const toolSchemas = {
     cortex_search: {
         name: 'cortex_search',
-        description: `Layered semantic search across memory using L0/L1/L2 tiered retrieval.
+        description: `Layered semantic search across ALL memories using L0/L1/L2 tiered retrieval.
 
 **Key Features:**
 - Tiered retrieval: L0 (abstract) -> L1 (overview) -> L2 (full content)
 - Token-efficient: Control exactly which layers to return
 
-**Parameters:**
-- return_layers: ["L0"] (default, ~100 tokens), ["L0","L1"] (~2100 tokens), ["L0","L1","L2"] (full)
-
 **When to use:**
-- Finding past conversations or decisions
-- Searching across all sessions
-- Discovering related memories by semantic similarity`,
+- Finding past conversations, decisions, or any historical info
+- Omit scope to search across ALL dimensions (recommended for most cases)
+- Use scope="cortex://user/default" only when specifically looking for user profile data
+
+**Parameters:**
+- return_layers: ["L0"] (default, ~100 tokens), ["L0","L1"] (~2100 tokens), ["L0","L1","L2"] (full)`,
         inputSchema: {
             type: 'object',
             properties: {
@@ -43,7 +43,8 @@ const toolSchemas = {
                 },
                 scope: {
                     type: 'string',
-                    description: 'Optional session/thread ID to limit search scope'
+                    description: `Optional. Omit to search ALL memories (recommended).
+Use "cortex://user/default" only when specifically looking for user profile/preferences.`
                 },
                 limit: {
                     type: 'integer',
@@ -72,8 +73,10 @@ const toolSchemas = {
         name: 'cortex_recall',
         description: `Recall memories with full context (L0 snippet + L2 content).
 
-This is a convenience wrapper that returns both abstract and full content.
-Use cortex_search with return_layers=["L0","L2"] for more control.`,
+Equivalent to cortex_search with return_layers=["L0","L2"].
+Use cortex_search directly for more control over layers.
+
+**Tip**: Omit scope to search all memories (recommended).`,
         inputSchema: {
             type: 'object',
             properties: {
@@ -83,7 +86,8 @@ Use cortex_search with return_layers=["L0","L2"] for more control.`,
                 },
                 scope: {
                     type: 'string',
-                    description: 'Optional session/thread ID to limit search scope'
+                    description: `Optional. Omit to search ALL memories (recommended).
+Use "cortex://user/default" only when specifically looking for user profile data.`
                 },
                 limit: {
                     type: 'integer',
@@ -537,7 +541,7 @@ function createPlugin(api) {
                 await ensureServicesReady();
                 const results = await client.search({
                     query: input.query,
-                    thread: input.scope,
+                    scope: input.scope,
                     limit: input.limit ?? searchLimit,
                     min_score: input.min_score ?? minScore,
                     return_layers: input.return_layers ?? ['L0']

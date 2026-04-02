@@ -1,6 +1,6 @@
 {
 	"name": "@memclaw/memclaw",
-	"version": "0.9.32",
+	"version": "0.9.33",
 	"description": "MemClaw - The Cortex Memory plugin for OpenClaw. Layered semantic memory for OpenClaw with easy setup and migration",
 	"homepage": "https://github.com/sopaco/cortex-mem",
 	"repository": {
@@ -60,9 +60,9 @@
 		"smol-toml": "^1.6.1"
 	},
 	"optionalDependencies": {
-		"@memclaw/bin-darwin-arm64": "0.1.8",
+		"@memclaw/bin-darwin-arm64": "0.1.9",
 		"@memclaw/bin-win-x64": "0.1.7",
-		"@memclaw/bin-linux-x64": "0.1.8"
+		"@memclaw/bin-linux-x64": "0.1.9"
 	},
 	"engines": {
 		"node": ">=20.0.0"

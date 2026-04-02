@@ -9,7 +9,13 @@ export type Layer = 'L0' | 'L1' | 'L2';
 
 export interface SearchOptions {
 	query: string;
-	thread?: string;
+	/** URI prefix to limit search scope. Examples:
+	 * - "cortex://session/abc" - search within a specific session
+	 * - "cortex://user/default" - search user memories (preferences, entities, etc.)
+	 * - "cortex://agent/claw/cases" - search agent cases
+	 * - Omit to search across all dimensions
+	 */
+	scope?: string;
 	limit?: number;
 	min_score?: number;
 	/** Which layers to return: ["L0"], ["L0","L1"], ["L0","L1","L2"] */
@@ -99,8 +105,18 @@ export class CortexMemClient {
 
 	/**
 	 * Layered semantic search with L0/L1/L2 tiered retrieval
+	 * 
+	 * @param options.scope - URI prefix to limit search scope:
+	 *   - "cortex://session/abc" - search within a specific session
+	 *   - "cortex://user/default" - search user memories
+	 *   - "cortex://agent/claw/cases" - search agent cases
+	 *   - Omit to search across all dimensions
 	 */
 	async search(options: SearchOptions): Promise<SearchResult[]> {
+		// Convert scope to root_uri for backend API
+		// Backend expects root_uri parameter for URI prefix filtering
+		const scope = options.scope;
+		
 		const response = await this.fetchJson<{
 			success: boolean;
 			data?: SearchResult[];
@@ -109,7 +125,7 @@ export class CortexMemClient {
 			method: 'POST',
 			body: JSON.stringify({
 				query: options.query,
-				thread: options.thread,
+				thread: scope,  // Backend still accepts thread for backward compatibility
 				limit: options.limit ?? 10,
 				min_score: options.min_score ?? 0.6,
 				return_layers: options.return_layers ?? ['L0']
@@ -128,12 +144,12 @@ export class CortexMemClient {
 	 */
 	async recall(
 		query: string,
-		thread?: string,
+		scope?: string,
 		limit: number = 10
 	): Promise<SearchResult[]> {
 		return this.search({
 			query,
-			thread,
+			scope,
 			limit,
 			return_layers: ['L0', 'L2']
 		});
